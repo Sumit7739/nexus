@@ -1,19 +1,149 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap');
+/* ─────────────────────────────────────────────────────────────────────────────
+   NEXUS — Design Tokens
+   Editorial paper aesthetic: warm off-white canvas, Instrument Serif display,
+   Inter body, muted pastels, hairline rules only. No cards, no shadows, no slop.
+───────────────────────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;500;600&display=swap');
+
 :root {
-  font-family: 'DM Sans', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  color: #292b25; background: #eeeee8; font-synthesis: none; text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
-  --ink: #292b25; --muted: #77796e; --soft-muted: #a1a295; --line: rgba(48, 51, 40, .12);
-  --paper: #eeeee8; --surface: rgba(250, 250, 246, .84); --surface-solid: #f7f7f1;
-  --accent: #a6b095; --accent-dark: #59664c; --accent-wash: rgba(127, 145, 105, .13);
-  --mono: 'DM Mono', 'SFMono-Regular', Consolas, monospace;
-  --panel-height: 46px; --dock-height: 68px; --desktop-cell-width: 96px; --desktop-cell-height: 96px;
-  --ease-out: cubic-bezier(.2, .75, .25, 1); --ease-spring: cubic-bezier(.2, 1.35, .4, 1);
-  --motion-fast: 130ms; --motion-normal: 220ms; --motion-slow: 340ms;
+  /* ── Fonts ──────────────────────────────────────────────────────────────── */
+  --font-display: 'Instrument Serif', 'Georgia', serif;
+  --font-body:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:    'SF Mono', 'Fira Mono', 'Consolas', monospace;
+
+  font-family: var(--font-body);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* ── Paper canvas ───────────────────────────────────────────────────────── */
+  --paper:        #f7f5f0;   /* warm off-white base */
+  --paper-2:      #f0ede6;   /* slightly warmer, inset areas */
+  --paper-3:      #e9e5dc;   /* deepest background layer */
+
+  /* ── Ink ────────────────────────────────────────────────────────────────── */
+  --ink:          #1a1916;   /* near-black warm */
+  --ink-2:        #3d3b35;
+  --ink-3:        #6e6b62;
+  --ink-4:        #a09d94;
+  --ink-5:        #cac7be;   /* hairline dividers */
+
+  /* ── Hairlines ──────────────────────────────────────────────────────────── */
+  --rule:         #e8e4dc;   /* primary divider */
+  --rule-2:       #f0ede6;   /* secondary, very faint */
+
+  /* ── Muted pastel pills ─────────────────────────────────────────────────── */
+  --pill-lavender-bg:  #ede8f8;
+  --pill-lavender-ink: #5b47a8;
+  --pill-sage-bg:      #e4f0e8;
+  --pill-sage-ink:     #2e6b46;
+  --pill-peach-bg:     #f8e8e4;
+  --pill-peach-ink:    #a04030;
+  --pill-amber-bg:     #f7f0e0;
+  --pill-amber-ink:    #8a6020;
+  --pill-sky-bg:       #e4eef8;
+  --pill-sky-ink:      #2a548a;
+
+  /* ── Accent (used sparingly — lock-screen unlock button, focus rings) ───── */
+  --accent:       #3d3b35;   /* charcoal — subtle, not blue/purple slop */
+  --accent-2:     #5b47a8;   /* lavender, only for selection/focus */
+
+  /* ── Surface (panels that need a slight lift, like dock/launcher) ────────── */
+  --surface:      rgba(247, 245, 240, 0.88);
+  --surface-dark: rgba(22, 20, 16, 0.88);
+
+  /* ── Zero-shadow philosophy — only hairlines, no box-shadows on UI chrome.
+        These are ONLY used for floating windows (they need some depth lift). ── */
+  --window-shadow: 0 2px 0 var(--rule), 0 8px 32px rgba(20,18,12,0.08), 0 2px 8px rgba(20,18,12,0.04);
+  --popup-shadow:  0 1px 0 var(--rule), 0 8px 24px rgba(20,18,12,0.1);
+
+  /* ── Radius ─────────────────────────────────────────────────────────────── */
+  --r-pill: 9999px;
+  --r-sm:   8px;
+  --r-md:   12px;
+  --r-lg:   16px;
+  --r-xl:   22px;
+  --r-icon: 12px;  /* app icon corners */
+
+  /* ── Motion ─────────────────────────────────────────────────────────────── */
+  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
+  --spring:      cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --t-xs:  80ms;
+  --t-sm:  150ms;
+  --t-md:  260ms;
+  --t-lg:  420ms;
+
+  /* ── Layout ─────────────────────────────────────────────────────────────── */
+  --menubar-h: 26px;
+  --dock-h:    88px;
 }
-* { box-sizing: border-box; }
-html, body, #root { width: 100%; height: 100%; min-width: 320px; margin: 0; overflow: hidden; }
-button, input, textarea, select { font: inherit; }
-button { color: inherit; }
-button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid #71835d; outline-offset: 3px; }
-::selection { background: #d9ddcd; color: #25251f; }
+
+/* ── Dark mode ──────────────────────────────────────────────────────────────── */
+/* Same editorial language, just on dark warm paper instead of light */
+.theme-dark {
+  --paper:   #18160f;
+  --paper-2: #201e16;
+  --paper-3: #282519;
+
+  --ink:     #f0ede4;
+  --ink-2:   #ccc9be;
+  --ink-3:   #857f71;
+  --ink-4:   #4e4a3e;
+  --ink-5:   #2e2b22;
+
+  --rule:    #2a2720;
+  --rule-2:  #231f18;
+
+  --pill-lavender-bg:  rgba(91,71,168,0.22);
+  --pill-lavender-ink: #c4b5fd;
+  --pill-sage-bg:      rgba(46,107,70,0.22);
+  --pill-sage-ink:     #86efac;
+  --pill-peach-bg:     rgba(160,64,48,0.2);
+  --pill-peach-ink:    #fca5a5;
+  --pill-amber-bg:     rgba(138,96,32,0.2);
+  --pill-amber-ink:    #fcd34d;
+  --pill-sky-bg:       rgba(42,84,138,0.2);
+  --pill-sky-ink:      #7dd3fc;
+
+  --accent:   #e8e4d8;
+  --accent-2: #a78bfa;
+
+  --surface:      rgba(24, 22, 15, 0.9);
+  --surface-dark: rgba(24, 22, 15, 0.92);
+
+  --window-shadow: 0 2px 0 var(--rule), 0 8px 32px rgba(0,0,0,0.35), 0 2px 8px rgba(0,0,0,0.2);
+  --popup-shadow:  0 1px 0 var(--rule), 0 8px 24px rgba(0,0,0,0.4);
+}
+
+/* ── Reset ──────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  width: 100%; height: 100%;
+  min-width: 320px;
+  margin: 0;
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+button, input, textarea, select { font: inherit; color: inherit; }
+button { background: none; border: none; cursor: pointer; padding: 0; }
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+}
+
+::selection { background: #e0daf0; color: var(--ink); }
+.theme-dark ::selection { background: rgba(167,139,250,0.25); color: var(--ink); }
+
+/* ── Scrollbars ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--rule); border-radius: var(--r-pill); }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-5); }

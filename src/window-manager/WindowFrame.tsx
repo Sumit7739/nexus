@@ -1,82 +1,99 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { Maximize2, Minus, Square, X } from 'lucide-react';
 import type { DesktopWindow, WindowBounds } from './types';
 
 interface Props {
-  window: DesktopWindow;
-  active: boolean;
-  zIndex: number;
-  onFocus: () => void;
-  onClose: () => void;
-  onMinimize: () => void;
-  onToggleMaximize: () => void;
-  onMove: (bounds: WindowBounds) => void;
-  onResize: (bounds: WindowBounds) => void;
-  children: ReactNode;
+  window:            DesktopWindow;
+  active:            boolean;
+  zIndex:            number;
+  onFocus:           () => void;
+  onClose:           () => void;
+  onMinimize:        () => void;
+  onToggleMaximize:  () => void;
+  onMove:            (bounds: WindowBounds) => void;
+  onResize:          (bounds: WindowBounds) => void;
+  children:          ReactNode;
 }
 
 type DragState = { pointerX: number; pointerY: number; bounds: WindowBounds; mode: 'move' | 'resize' };
 
 export function WindowFrame({ window: win, active, zIndex, onFocus, onClose, onMinimize, onToggleMaximize, onMove, onResize, children }: Props) {
   const drag = useRef<DragState | null>(null);
-  const [previewBounds, setPreviewBounds] = useState<WindowBounds | null>(null);
-  const bounds = previewBounds ?? win.bounds;
+  const [preview, setPreview] = useState<WindowBounds | null>(null);
+  const bounds = preview ?? win.bounds;
 
   useEffect(() => {
-    const handleMove = (event: PointerEvent) => {
+    const onMove_ = (e: PointerEvent) => {
       if (!drag.current) return;
-      const current = drag.current;
-      const dx = event.clientX - current.pointerX;
-      const dy = event.clientY - current.pointerY;
-      const next = current.mode === 'move'
-        ? { ...current.bounds, x: current.bounds.x + dx, y: current.bounds.y + dy }
-        : { ...current.bounds, width: Math.max(320, current.bounds.width + dx), height: Math.max(220, current.bounds.height + dy) };
-      setPreviewBounds(next);
+      const dx = e.clientX - drag.current.pointerX;
+      const dy = e.clientY - drag.current.pointerY;
+      const next = drag.current.mode === 'move'
+        ? { ...drag.current.bounds, x: drag.current.bounds.x + dx, y: drag.current.bounds.y + dy }
+        : { ...drag.current.bounds, width: Math.max(360, drag.current.bounds.width + dx), height: Math.max(240, drag.current.bounds.height + dy) };
+      setPreview(next);
     };
-    const handleUp = () => {
+    const onUp = () => {
       if (!drag.current) return;
-      const finalBounds = previewBounds;
-      if (finalBounds) (drag.current.mode === 'move' ? onMove : onResize)(finalBounds);
+      const final = preview;
+      if (final) (drag.current.mode === 'move' ? onMove : onResize)(final);
       drag.current = null;
-      setPreviewBounds(null);
+      setPreview(null);
     };
-    window.addEventListener('pointermove', handleMove);
-    window.addEventListener('pointerup', handleUp);
-    return () => {
-      window.removeEventListener('pointermove', handleMove);
-      window.removeEventListener('pointerup', handleUp);
-    };
-  }, [onMove, onResize, previewBounds]);
+    window.addEventListener('pointermove', onMove_);
+    window.addEventListener('pointerup', onUp);
+    return () => { window.removeEventListener('pointermove', onMove_); window.removeEventListener('pointerup', onUp); };
+  }, [onMove, onResize, preview]);
 
-  const beginDrag = (event: ReactPointerEvent, mode: 'move' | 'resize') => {
-    if ((event.target as HTMLElement).closest('button')) return;
+  const beginDrag = (e: ReactPointerEvent, mode: 'move' | 'resize') => {
+    if ((e.target as HTMLElement).closest('button')) return;
     if (win.status === 'maximized') return;
-    event.preventDefault();
+    e.preventDefault();
     onFocus();
-    drag.current = { pointerX: event.clientX, pointerY: event.clientY, bounds: win.bounds, mode };
+    drag.current = { pointerX: e.clientX, pointerY: e.clientY, bounds: win.bounds, mode };
   };
 
   if (win.status === 'minimized') return null;
-  const isMaximized = win.status === 'maximized';
+  const isMax = win.status === 'maximized';
 
   return (
     <section
-      className={`window-frame ${active ? 'is-active' : ''} ${isMaximized ? 'is-maximized' : ''}`}
-      style={isMaximized ? { zIndex, inset: '16px 16px 82px', width: 'auto', height: 'auto' } : { zIndex, left: bounds.x, top: bounds.y, width: bounds.width, height: bounds.height }}
+      className={`wf ${active ? 'wf--active' : ''} ${isMax ? 'wf--max' : ''}`}
+      style={isMax
+        ? { zIndex, position: 'absolute', inset: 0, width: 'auto', height: 'auto' }
+        : { zIndex, left: bounds.x, top: bounds.y, width: bounds.width, height: bounds.height }}
       onPointerDown={onFocus}
       aria-label={`${win.title} window`}
     >
-      <header className="window-titlebar" onPointerDown={(event) => beginDrag(event, 'move')} onDoubleClick={onToggleMaximize}>
-        <div className="window-controls" aria-label="Window controls">
-          <button className="window-control close" onClick={onClose} aria-label={`Close ${win.title}`}><X size={12} /></button>
-          <button className="window-control minimize" onClick={onMinimize} aria-label={`Minimize ${win.title}`}><Minus size={12} /></button>
-          <button className="window-control maximize" onClick={onToggleMaximize} aria-label={`Maximize ${win.title}`}><Square size={10} /></button>
+      {/* Title bar */}
+      <header
+        className="wf-titlebar"
+        onPointerDown={e => beginDrag(e, 'move')}
+        onDoubleClick={onToggleMaximize}
+      >
+        {/* Traffic lights — LEFT side like macOS */}
+        <div className="wf-controls" aria-label="Window controls">
+          <button className="wf-btn wf-close"    onClick={onClose}          aria-label={`Close ${win.title}`}    title="Close" />
+          <button className="wf-btn wf-minimize"  onClick={onMinimize}       aria-label={`Minimize ${win.title}`} title="Minimize" />
+          <button className="wf-btn wf-maximize"  onClick={onToggleMaximize} aria-label={`Maximize ${win.title}`} title={isMax ? 'Restore' : 'Maximize'} />
         </div>
-        <span className="window-title">{win.title}</span>
-        <button className="titlebar-action" onClick={onToggleMaximize} aria-label="Toggle maximize"><Maximize2 size={13} /></button>
+
+        {/* Centered title */}
+        <span className="wf-title">{win.title}</span>
+
+        {/* Spacer to balance traffic lights */}
+        <div className="wf-controls wf-controls--ghost" aria-hidden />
       </header>
-      <div className="window-content">{children}</div>
-      {!isMaximized && <div className="resize-handle" onPointerDown={(event) => beginDrag(event, 'resize')} aria-label={`Resize ${win.title}`} />}
+
+      {/* Content */}
+      <div className="wf-content">{children}</div>
+
+      {/* Resize handle */}
+      {!isMax && (
+        <div
+          className="wf-resize"
+          onPointerDown={e => beginDrag(e, 'resize')}
+          aria-label={`Resize ${win.title}`}
+        />
+      )}
     </section>
   );
 }
