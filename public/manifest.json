@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "Nexus — New Tab Workspace",
+  "version": "0.1.0",
+  "description": "A calm, OS-like desktop for your browser's new tab.",
+  "chrome_url_overrides": { "newtab": "index.html" },
+  "permissions": ["storage"]
+}
