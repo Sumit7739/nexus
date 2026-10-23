@@ -1,26 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap');
 :root {
-  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  color: #25251f;
-  background: #f4f3ef;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  --ink: #25251f;
-  --muted: #77776e;
-  --soft-muted: #a5a49b;
-  --line: rgba(47, 47, 38, .12);
-  --paper: #f4f3ef;
-  --surface: rgba(255, 255, 252, .88);
-  --accent: #a0a78c;
-  --accent-dark: #566246;
-  --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
-  --display: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'DM Sans', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #292b25; background: #eeeee8; font-synthesis: none; text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  --ink: #292b25; --muted: #77796e; --soft-muted: #a1a295; --line: rgba(48, 51, 40, .12);
+  --paper: #eeeee8; --surface: rgba(250, 250, 246, .84); --surface-solid: #f7f7f1;
+  --accent: #a6b095; --accent-dark: #59664c; --accent-wash: rgba(127, 145, 105, .13);
+  --mono: 'DM Mono', 'SFMono-Regular', Consolas, monospace;
+  --panel-height: 46px; --dock-height: 68px; --desktop-cell-width: 96px; --desktop-cell-height: 96px;
+  --ease-out: cubic-bezier(.2, .75, .25, 1); --ease-spring: cubic-bezier(.2, 1.35, .4, 1);
+  --motion-fast: 130ms; --motion-normal: 220ms; --motion-slow: 340ms;
 }
-
 * { box-sizing: border-box; }
 html, body, #root { width: 100%; height: 100%; min-width: 320px; margin: 0; overflow: hidden; }
 button, input, textarea, select { font: inherit; }
 button { color: inherit; }
-button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid #75835f; outline-offset: 2px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid #71835d; outline-offset: 3px; }
 ::selection { background: #d9ddcd; color: #25251f; }
