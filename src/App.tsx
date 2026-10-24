@@ -5,7 +5,7 @@ import {
   Lock, Shield, Check, Plus, Pin,
   MoreHorizontal, List, Grid2X2, Layers,
   Sun, Moon, LogOut, RefreshCw, ChevronLeft, ChevronRight as ChevronR,
-  History, Sparkles, CheckCircle2, Wrench, Trash2, Image, ChevronDown, ExternalLink,
+  History, Sparkles, CheckCircle2, Wrench, Trash2, Image, ExternalLink,
 } from 'lucide-react';
 import { APP_REGISTRY, getAppDefinition } from './apps/registry';
 import { AppHost } from './apps/AppHost';
