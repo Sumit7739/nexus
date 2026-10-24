@@ -1,4 +1,4 @@
-import { Bookmark, Globe2, Settings2, StickyNote, Youtube } from 'lucide-react';
+import { Bookmark, Code2, Globe2, Settings2, StickyNote, Youtube } from 'lucide-react';
 import type { AppDefinition } from './app-types';
 
 export const APP_REGISTRY: AppDefinition[] = [
@@ -7,6 +7,7 @@ export const APP_REGISTRY: AppDefinition[] = [
   { id: 'notes', name: 'Scratchpad', description: 'A little space for thoughts', icon: StickyNote, defaultBounds: { x: 210, y: 110, width: 580, height: 500 }, category: 'utility' },
   { id: 'bookmarks', name: 'Saved links', description: 'Your frequently used destinations', icon: Bookmark, defaultBounds: { x: 170, y: 90, width: 700, height: 560 }, category: 'utility' },
   { id: 'settings', name: 'Settings', description: 'Personalize your workspace', icon: Settings2, defaultBounds: { x: 170, y: 80, width: 760, height: 610 }, category: 'system' },
+  { id: 'widgets', name: 'Widget Studio', description: 'Design, edit, and manage widgets', icon: Code2, defaultBounds: { x: 90, y: 50, width: 1080, height: 720 }, category: 'system' },
 ];
 
 export function getAppDefinition(id: string) {

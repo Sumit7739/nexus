@@ -1,4 +1,4 @@
-export type AppId = 'browser' | 'youtube' | 'notes' | 'bookmarks' | 'settings';
+export type AppId = 'browser' | 'youtube' | 'notes' | 'bookmarks' | 'settings' | 'widgets';
 export type WindowStatus = 'normal' | 'minimized' | 'maximized';
 
 export interface WindowBounds {

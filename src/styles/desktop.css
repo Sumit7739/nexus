@@ -19,6 +19,8 @@
 @keyframes dot-pop    { from { opacity:0; transform:translateX(-50%) scale(0.3) } to { opacity:1; transform:translateX(-50%) scale(1) } }
 @keyframes overlay-in { from { opacity:0 } to { opacity:1 } }
 @keyframes welcome-in { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:none } }
+@keyframes wallpaper-crossfade { from { opacity:0; transform:scale(1.025); filter:blur(4px); } to { opacity:1; transform:scale(1); filter:blur(0); } }
+@keyframes desktop-message-in { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
 @keyframes launcher-up { from { opacity:0; transform:translateX(-50%) translateY(12px) scale(0.97) } to { opacity:1; transform:translateX(-50%) translateY(0) scale(1) } }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -722,3 +724,160 @@
     transition-duration:0.01ms !important;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   RELEASE NOTES — Changelog modal
+══════════════════════════════════════════════════════════════════════════ */
+.launcher-footer {
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 43px;
+  padding: 7px 12px 7px 15px;
+}
+.launcher-local-status { display:flex; align-items:center; gap:7px; min-width:0; }
+.changelog-trigger {
+  display:inline-flex; align-items:center; gap:6px; flex:0 0 auto;
+  min-height:28px; padding:0 8px; border:1px solid var(--rule); border-radius:8px;
+  background:var(--paper); color:var(--ink-2); font-size:10px; font-weight:600;
+  cursor:pointer; transition:background var(--t-xs), border-color var(--t-xs), transform var(--t-xs);
+}
+.changelog-trigger:hover { background:var(--paper-2); border-color:var(--ink-5); transform:translateY(-1px); }
+.changelog-trigger svg { color:var(--ink-3); }
+.version-pill {
+  padding:2px 5px; border-radius:5px; background:var(--paper-3); color:var(--ink-3);
+  font-family:var(--font-mono); font-size:9px; font-weight:600;
+}
+.desktop.theme-dark .changelog-trigger { background:rgba(255,255,255,.04); }
+.desktop.theme-dark .changelog-trigger:hover { background:rgba(255,255,255,.08); }
+.desktop.theme-dark .version-pill { background:rgba(255,255,255,.08); }
+
+.changelog-scrim {
+  position:absolute; inset:0; z-index:500; display:grid; place-items:center;
+  padding:22px; background:rgba(25,24,21,.34); backdrop-filter:blur(9px);
+  animation:overlay-in .18s var(--ease-out) both;
+}
+.desktop.theme-dark .changelog-scrim { background:rgba(0,0,0,.58); }
+.changelog-modal {
+  display:flex; flex-direction:column; width:min(560px,100%); max-height:min(760px,calc(100vh - 44px));
+  overflow:hidden; border:1px solid rgba(26,25,22,.12); border-radius:20px;
+  background:var(--paper); color:var(--ink); box-shadow:0 28px 90px rgba(0,0,0,.22);
+  animation:spring-up .24s var(--ease-out) both;
+}
+.desktop.theme-dark .changelog-modal { border-color:rgba(255,255,255,.1); background:#171610; box-shadow:0 28px 90px rgba(0,0,0,.5); }
+.changelog-hero {
+  position:relative; flex:0 0 auto; padding:22px 25px 21px;
+  background:radial-gradient(ellipse at 100% 0%,rgba(202,214,167,.35),transparent 47%),var(--paper-2);
+  border-bottom:1px solid var(--rule);
+}
+.desktop.theme-dark .changelog-hero { background:radial-gradient(ellipse at 100% 0%,rgba(114,130,73,.18),transparent 48%),#1c1b14; }
+.changelog-hero-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; }
+.changelog-mark { display:grid; place-items:center; width:38px; height:38px; border:1px solid var(--rule); border-radius:12px; background:var(--paper); color:var(--ink-2); }
+.desktop.theme-dark .changelog-mark { background:rgba(255,255,255,.05); }
+.changelog-close { display:grid; place-items:center; width:30px; height:30px; border:1px solid var(--rule); border-radius:9px; background:var(--paper); color:var(--ink-3); cursor:pointer; }
+.changelog-close:hover { background:var(--paper-3); color:var(--ink); }
+.desktop.theme-dark .changelog-close { background:rgba(255,255,255,.04); }
+.changelog-kicker { color:var(--ink-4); font-size:9px; font-weight:700; letter-spacing:1.7px; }
+.changelog-title-row { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-top:6px; }
+.changelog-title-row h2 { margin:0; font-family:var(--font-display); font-size:31px; line-height:1.15; font-weight:400; letter-spacing:-.8px; }
+.changelog-version { padding:5px 8px; border:1px solid rgba(104,124,66,.22); border-radius:7px; background:rgba(183,204,133,.2); color:var(--ink-2); font:600 10px var(--font-mono); }
+.changelog-hero > p { max-width:410px; margin:9px 0 0; color:var(--ink-3); font-size:12px; line-height:1.65; }
+.changelog-body { min-height:0; overflow:auto; padding:20px 25px 22px; }
+.changelog-release-line { display:flex; align-items:flex-start; gap:10px; padding:0 0 18px; border-bottom:1px solid var(--rule); }
+.changelog-release-dot { width:8px; height:8px; margin-top:5px; flex:0 0 8px; border-radius:50%; background:#7b9651; box-shadow:0 0 0 4px rgba(123,150,81,.12); }
+.changelog-release-line div { display:grid; gap:4px; }
+.changelog-release-line strong { font-size:12px; font-weight:650; }
+.changelog-release-line span { color:var(--ink-4); font-size:10px; line-height:1.5; }
+.changelog-group { margin-top:20px; }
+.changelog-group h3 { display:flex; align-items:center; gap:8px; margin:0 0 9px; font-size:12px; font-weight:700; }
+.change-icon { display:grid; place-items:center; width:25px; height:25px; border-radius:8px; }
+.change-icon.added { background:rgba(117,147,73,.13); color:#6d853e; }
+.change-icon.updated { background:rgba(82,126,174,.13); color:#4776a4; }
+.change-icon.fixed { background:rgba(63,139,105,.13); color:#39805e; }
+.change-icon.removed { background:rgba(178,93,76,.12); color:#a45b4d; }
+.desktop.theme-dark .change-icon.added { color:#b5d486; }
+.desktop.theme-dark .change-icon.updated { color:#9dc5ee; }
+.desktop.theme-dark .change-icon.fixed { color:#9ad8b5; }
+.desktop.theme-dark .change-icon.removed { color:#e8a69b; }
+.changelog-group ul { display:grid; gap:8px; margin:0; padding-left:18px; color:var(--ink-3); font-size:11px; line-height:1.65; }
+.changelog-group li { padding-left:2px; }
+.changelog-group li::marker { color:var(--ink-5); }
+.removed-group p { margin:0; color:var(--ink-3); font-size:11px; line-height:1.6; }
+.changelog-note { display:flex; align-items:flex-start; gap:9px; margin-top:22px; padding:11px 12px; border:1px solid var(--rule); border-radius:10px; background:var(--paper-2); }
+.changelog-note > span { display:grid; place-items:center; width:16px; height:16px; flex:0 0 16px; border-radius:50%; background:var(--paper-3); color:var(--ink-3); font:700 10px Georgia,serif; }
+.changelog-note p { margin:0; color:var(--ink-3); font-size:10px; line-height:1.65; }
+.changelog-footer { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 20px; border-top:1px solid var(--rule); background:var(--paper-2); }
+.changelog-footer > span { display:flex; align-items:center; gap:7px; color:var(--ink-4); font-size:10px; }
+.changelog-footer button { display:flex; align-items:center; gap:5px; min-height:30px; padding:0 10px; border:1px solid var(--rule); border-radius:8px; background:var(--paper); color:var(--ink-2); font-size:11px; font-weight:600; cursor:pointer; }
+.changelog-footer button:hover { background:var(--paper-3); }
+.desktop.theme-dark .changelog-footer { background:rgba(255,255,255,.025); }
+.desktop.theme-dark .changelog-footer button { background:rgba(255,255,255,.04); }
+@media (max-width:520px) {
+  .changelog-scrim { padding:10px; }
+  .changelog-modal { max-height:calc(100vh - 20px); border-radius:15px; }
+  .changelog-hero { padding:17px 17px 16px; }
+  .changelog-hero-top { margin-bottom:15px; }
+  .changelog-title-row h2 { font-size:27px; }
+  .changelog-body { padding:16px 17px 18px; }
+  .changelog-footer { padding:10px 14px; }
+  .launcher-footer { padding-left:11px; }
+  .launcher-local-status { font-size:8px; letter-spacing:.3px; }
+  .changelog-trigger { gap:4px; padding:0 6px; font-size:9px; }
+}
+@media (prefers-reduced-motion:reduce) {
+  .changelog-modal, .changelog-scrim { animation:none; }
+}
+
+
+/* Phase 3: expanded wallpaper collection */
+.wallpaper-ocean .wp-blob-1 { width:650px;height:560px;top:-130px;left:-80px;background:#b7d9e8; }
+.wallpaper-ocean .wp-blob-2 { width:600px;height:520px;bottom:-130px;right:-80px;background:#b8e7df; }
+.wallpaper-ocean .wp-blob-3 { width:340px;height:330px;top:35%;right:25%;background:#d2e4fb;opacity:.5; }
+.wallpaper-ember .wp-blob-1 { width:600px;height:520px;top:-110px;right:-80px;background:#f2b8a1; }
+.wallpaper-ember .wp-blob-2 { width:520px;height:480px;bottom:-100px;left:-60px;background:#e8b77d; }
+.wallpaper-ember .wp-blob-3 { width:360px;height:340px;top:30%;left:30%;background:#f5d5a7;opacity:.45; }
+.wallpaper-lavender .wp-blob-1 { width:620px;height:540px;top:-130px;left:-90px;background:#d6c9f5; }
+.wallpaper-lavender .wp-blob-2 { width:520px;height:500px;bottom:-100px;right:-70px;background:#edcfe8; }
+.wallpaper-lavender .wp-blob-3 { width:330px;height:320px;top:38%;right:25%;background:#d7d9fb;opacity:.5; }
+.wallpaper-midnight { background:#151721; }
+.wallpaper-midnight .wp-blob-1 { width:650px;height:560px;top:-140px;left:-80px;background:#454875;opacity:.65; }
+.wallpaper-midnight .wp-blob-2 { width:560px;height:520px;bottom:-120px;right:-60px;background:#235c66;opacity:.55; }
+.wallpaper-midnight .wp-blob-3 { width:360px;height:350px;top:30%;right:30%;background:#7c557b;opacity:.3; }
+.wallpaper-rose .wp-blob-1 { width:600px;height:520px;top:-100px;left:-80px;background:#f3cbd5; }
+.wallpaper-rose .wp-blob-2 { width:520px;height:480px;bottom:-100px;right:-60px;background:#f3d9c9; }
+.wallpaper-rose .wp-blob-3 { width:330px;height:320px;top:35%;right:25%;background:#e7d5f6;opacity:.45; }
+.wallpaper-mono .wp-blob-1 { width:600px;height:520px;top:-120px;left:-80px;background:#d8d8d8; }
+.wallpaper-mono .wp-blob-2 { width:520px;height:480px;bottom:-100px;right:-60px;background:#bfc4c8; }
+.wallpaper-mono .wp-blob-3 { width:340px;height:330px;top:35%;right:25%;background:#efefef;opacity:.55; }
+.wallpaper-citrus .wp-blob-1 { width:600px;height:520px;top:-110px;left:-80px;background:#f4edb4; }
+.wallpaper-citrus .wp-blob-2 { width:540px;height:500px;bottom:-110px;right:-60px;background:#c9e7bd; }
+.wallpaper-citrus .wp-blob-3 { width:340px;height:330px;top:35%;right:25%;background:#f4d6a7;opacity:.5; }
+.wallpaper-glacier .wp-blob-1 { width:620px;height:540px;top:-120px;left:-80px;background:#c8e4f7; }
+.wallpaper-glacier .wp-blob-2 { width:540px;height:500px;bottom:-100px;right:-60px;background:#d1e9e5; }
+.wallpaper-glacier .wp-blob-3 { width:340px;height:330px;top:35%;right:25%;background:#d9dafa;opacity:.5; }
+
+/* Wallpaper controls shared by desktop and system-tray menus */
+.ctx-wallpaper-options,.tray-wallpaper-options { display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px;padding:8px 12px 10px; }
+.ctx-wallpaper-options button,.tray-wallpaper-options button { display:grid;place-items:center;padding:2px;border:1px solid transparent;border-radius:8px;background:transparent;cursor:pointer; }
+.ctx-wallpaper-options button:hover,.tray-wallpaper-options button:hover,.ctx-wallpaper-options button.is-current,.tray-wallpaper-options button.is-current { border-color:var(--ink-3);background:var(--paper-2); }
+.wallpaper-swatch { display:block;width:20px;height:20px;border-radius:6px;background:linear-gradient(135deg,#e0d9f7,#d0f0e4); }
+.swatch-aurora { background:linear-gradient(135deg,#ddd6f7,#c9edf8); }.swatch-dusk { background:linear-gradient(135deg,#f9dec9,#f7d0cd); }.swatch-forest { background:linear-gradient(135deg,#c9f0d8,#c9e8f5); }
+.swatch-ocean { background:linear-gradient(135deg,#b7d9e8,#b8e7df); }.swatch-ember { background:linear-gradient(135deg,#f2b8a1,#e8b77d); }.swatch-lavender { background:linear-gradient(135deg,#d6c9f5,#edcfe8); }.swatch-midnight { background:linear-gradient(135deg,#454875,#235c66); }
+.swatch-rose { background:linear-gradient(135deg,#f3cbd5,#e7d5f6); }.swatch-mono { background:linear-gradient(135deg,#d8d8d8,#bfc4c8); }.swatch-citrus { background:linear-gradient(135deg,#f4edb4,#c9e7bd); }.swatch-glacier { background:linear-gradient(135deg,#c8e4f7,#d1e9e5); }
+/* Give launcher more breathing room and let saved links live above apps. */
+.app-launcher { width:min(430px,calc(100vw - 32px)); max-height:min(78vh,760px); }
+.launcher-list { max-height: min(38vh,360px); }
+.launcher-saved-links { padding:10px 14px 8px;border-bottom:1px solid var(--rule); }
+.launcher-saved-heading { display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;color:var(--ink-4);font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase; }
+.launcher-saved-list { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px; }
+.launcher-saved-list button { min-width:0;display:flex;align-items:center;gap:7px;padding:7px 8px;border:1px solid var(--rule);border-radius:9px;background:var(--paper-2);color:var(--ink);text-align:left;cursor:pointer; }
+.launcher-saved-list button:hover { background:var(--paper-3); }
+.launcher-saved-list button > span:nth-child(2) { flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px; }
+.saved-link-favicon { display:grid;place-items:center;width:22px;height:22px;flex:0 0 22px;border-radius:7px;background:var(--paper-3);font-size:10px;font-weight:700; }
+.launcher-footer-spacer { flex:1; }
+
+/* Smooth wallpaper crossfade and rotating desktop notes */
+.desktop-wallpaper.wallpaper-transition { animation:wallpaper-crossfade .72s cubic-bezier(.2,.7,.2,1) both; }
+.desktop-message { position:absolute; z-index:1; left:clamp(22px,3.4vw,58px); bottom:clamp(68px,13vh,125px); max-width:min(560px,42vw); pointer-events:none; animation:desktop-message-in .55s ease both; }
+.desktop-message span { display:block; color:var(--ink-3); opacity:.72; font-family:var(--font-display); font-style:italic; font-size:clamp(15px,1.55vw,25px); line-height:1.35; letter-spacing:-.3px; text-wrap:pretty; }
+.theme-dark .desktop-message span { color:var(--ink-3); opacity:.78; }
+@media (prefers-reduced-motion: reduce) { .desktop-wallpaper.wallpaper-transition,.desktop-message,.settings-panel { animation:none !important; } }

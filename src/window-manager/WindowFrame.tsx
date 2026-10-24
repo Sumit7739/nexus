@@ -21,6 +21,11 @@ export function WindowFrame({ window: win, active, zIndex, onFocus, onClose, onM
   const [preview, setPreview] = useState<WindowBounds | null>(null);
   const bounds = preview ?? win.bounds;
 
+  const previewRef = useRef<WindowBounds | null>(null);
+  const callbacksRef = useRef({ onMove, onResize });
+  callbacksRef.current = { onMove, onResize };
+  previewRef.current = preview;
+
   useEffect(() => {
     const onMove_ = (e: PointerEvent) => {
       if (!drag.current) return;
@@ -28,26 +33,39 @@ export function WindowFrame({ window: win, active, zIndex, onFocus, onClose, onM
       const dy = e.clientY - drag.current.pointerY;
       const next = drag.current.mode === 'move'
         ? { ...drag.current.bounds, x: drag.current.bounds.x + dx, y: drag.current.bounds.y + dy }
-        : { ...drag.current.bounds, width: Math.max(360, drag.current.bounds.width + dx), height: Math.max(240, drag.current.bounds.height + dy) };
+        : { ...drag.current.bounds, width: Math.max(320, drag.current.bounds.width + dx), height: Math.max(220, drag.current.bounds.height + dy) };
+      previewRef.current = next;
       setPreview(next);
     };
     const onUp = () => {
       if (!drag.current) return;
-      const final = preview;
-      if (final) (drag.current.mode === 'move' ? onMove : onResize)(final);
+      const currentDrag = drag.current;
+      const final = previewRef.current;
+      if (final) {
+        const callback = currentDrag.mode === 'move' ? callbacksRef.current.onMove : callbacksRef.current.onResize;
+        callback(final);
+      }
       drag.current = null;
+      previewRef.current = null;
       setPreview(null);
     };
     window.addEventListener('pointermove', onMove_);
     window.addEventListener('pointerup', onUp);
-    return () => { window.removeEventListener('pointermove', onMove_); window.removeEventListener('pointerup', onUp); };
-  }, [onMove, onResize, preview]);
+    window.addEventListener('pointercancel', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove_);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+  }, []);
 
   const beginDrag = (e: ReactPointerEvent, mode: 'move' | 'resize') => {
     if ((e.target as HTMLElement).closest('button')) return;
     if (win.status === 'maximized') return;
     e.preventDefault();
     onFocus();
+    previewRef.current = win.bounds;
+    setPreview(win.bounds);
     drag.current = { pointerX: e.clientX, pointerY: e.clientY, bounds: win.bounds, mode };
   };
 

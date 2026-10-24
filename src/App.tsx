@@ -5,6 +5,7 @@ import {
   Lock, Shield, Check, Plus, Pin,
   MoreHorizontal, List, Grid2X2, Layers,
   Sun, Moon, LogOut, RefreshCw, ChevronLeft, ChevronRight as ChevronR,
+  History, Sparkles, CheckCircle2, Wrench, Trash2, Image, ChevronDown, ExternalLink,
 } from 'lucide-react';
 import { APP_REGISTRY, getAppDefinition } from './apps/registry';
 import { AppHost } from './apps/AppHost';
@@ -28,7 +29,12 @@ const SESSION_UNLOCKED   = 'nexus.session-unlocked';
 const SPLASH_MS          = 1600;
 
 type EntryScreen = 'splash' | 'lock' | 'desktop';
-type Wallpaper   = 'mist' | 'aurora' | 'dusk' | 'forest';
+type Wallpaper = 'mist' | 'aurora' | 'dusk' | 'forest' | 'ocean' | 'ember' | 'lavender' | 'midnight' | 'rose' | 'mono' | 'citrus' | 'glacier';
+const WALLPAPERS: { id: Wallpaper; name: string }[] = [
+  { id: 'mist', name: 'Soft mist' }, { id: 'aurora', name: 'Aurora' }, { id: 'dusk', name: 'Warm dusk' }, { id: 'forest', name: 'Forest' },
+  { id: 'ocean', name: 'Ocean glass' }, { id: 'ember', name: 'Ember' }, { id: 'lavender', name: 'Lavender haze' }, { id: 'midnight', name: 'Midnight' },
+  { id: 'rose', name: 'Rosewater' }, { id: 'mono', name: 'Monochrome' }, { id: 'citrus', name: 'Citrus' }, { id: 'glacier', name: 'Glacier' },
+];
 type MenuView    = 'list' | 'grid';
 type Theme       = 'light' | 'dark';
 
@@ -48,7 +54,7 @@ const DEFAULT_PREFS: Preferences = {
 function readPrefs(): Preferences {
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') as Partial<Preferences>;
-    const wallpapers: Wallpaper[] = ['mist', 'aurora', 'dusk', 'forest'];
+    const wallpapers = WALLPAPERS.map(w => w.id);
     return {
       theme:          s.theme === 'dark' ? 'dark' : 'light',
       wallpaper:      wallpapers.includes(s.wallpaper as Wallpaper) ? s.wallpaper as Wallpaper : 'mist',
@@ -226,14 +232,17 @@ function PasswordSetup({ onSave, onCancel }: SetupProps) {
 interface CtxProps {
   x: number; y: number; onClose: () => void;
   onOpenLauncher: () => void; onToggleArrange: () => void; arrangeMode: boolean;
+  wallpaper: Wallpaper; onWallpaperChange: (wallpaper: Wallpaper) => void;
 }
-function DesktopCtxMenu({ x, y, onClose, onOpenLauncher, onToggleArrange, arrangeMode }: CtxProps) {
+function DesktopCtxMenu({ x, y, onClose, onOpenLauncher, onToggleArrange, arrangeMode, wallpaper, onWallpaperChange }: CtxProps) {
   return (
     <>
       <div className="ctx-scrim" onClick={onClose} />
       <div className="ctx-menu" style={{ left: x, top: y }} role="menu">
         <button onClick={() => { onOpenLauncher(); onClose(); }}><LayoutGrid size={13} /><span>Open launcher</span></button>
         <button onClick={() => { onToggleArrange(); onClose(); }}><RefreshCw size={13} /><span>{arrangeMode ? 'Done arranging' : 'Arrange icons'}</span></button>
+        <button onClick={() => onWallpaperChange(WALLPAPERS[(WALLPAPERS.findIndex(w => w.id === wallpaper) + 1) % WALLPAPERS.length].id)}><Image size={13} /><span>Next wallpaper</span><ChevronRight size={12} /></button>
+        <div className="ctx-wallpaper-options">{WALLPAPERS.map(w => <button key={w.id} className={wallpaper === w.id ? 'is-current' : ''} title={w.name} aria-label={w.name} onClick={() => { onWallpaperChange(w.id); onClose(); }}><span className={`wallpaper-swatch swatch-${w.id}`} /></button>)}</div>
         <div className="ctx-sep" />
         <button onClick={onClose}><span className="ctx-dismiss">Dismiss</span></button>
       </div>
@@ -279,8 +288,9 @@ interface TrayMenuProps {
   now: Date; theme: Theme; hasPassword: boolean;
   onToggleTheme: () => void; onLock: () => void;
   onSetupPassword: () => void; onClose: () => void;
+  wallpaper: Wallpaper; onWallpaperChange: (wallpaper: Wallpaper) => void;
 }
-function TrayMenu({ now, theme, hasPassword, onToggleTheme, onLock, onSetupPassword, onClose }: TrayMenuProps) {
+function TrayMenu({ now, theme, hasPassword, onToggleTheme, onLock, onSetupPassword, onClose, wallpaper, onWallpaperChange }: TrayMenuProps) {
   return (
     <>
       <div className="ctx-scrim" onClick={onClose} />
@@ -294,6 +304,10 @@ function TrayMenu({ now, theme, hasPassword, onToggleTheme, onLock, onSetupPassw
             {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
             <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
           </button>
+          <button className="tray-action" onClick={() => onWallpaperChange(WALLPAPERS[(WALLPAPERS.findIndex(w => w.id === wallpaper) + 1) % WALLPAPERS.length].id)}>
+            <Image size={14} /><span>Next wallpaper · {WALLPAPERS.find(w => w.id === wallpaper)?.name}</span>
+          </button>
+          <div className="tray-wallpaper-options">{WALLPAPERS.map(w => <button key={w.id} className={wallpaper === w.id ? 'is-current' : ''} title={w.name} aria-label={w.name} onClick={() => onWallpaperChange(w.id)}><span className={`wallpaper-swatch swatch-${w.id}`} /></button>)}</div>
           <button className="tray-action" onClick={() => { onSetupPassword(); onClose(); }}>
             <Shield size={14} />
             <span>{hasPassword ? 'Change passcode' : 'Set passcode'}</span>
@@ -332,22 +346,38 @@ export function App() {
   const [showSetup, setShowSetup]       = useState(false);
   const [ctxMenu, setCtxMenu]           = useState<{ x: number; y: number } | null>(null);
   const [trayOpen, setTrayOpen]         = useState(false);
-  /* Messages */
+  const [messageIndex, setMessageIndex] = useState(0);
   const [messages, setMessages]         = useState<DesktopMessage[]>(readMessages);
-  const [msgIndex, setMsgIndex]         = useState(() => Math.floor(Math.random() * readMessages().length));
   const [widgets, setWidgets]           = useState<WidgetDefinition[]>(readWidgets);
   const [previewWidget, setPreviewWidget] = useState<WidgetDefinition | null>(null);
+  const [changelogOpen, setChangelogOpen] = useState(false);
+  const [savedLinks, setSavedLinks] = useState<{id:string;title:string;url:string;mode?:string}[]>(() => { try { const v = JSON.parse(localStorage.getItem('nexus.saved-apps.v1') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } });
+
+  useEffect(() => {
+    const handleWidgetTheme = (event: Event) => { const requested = (event as CustomEvent).detail; if (requested === 'light' || requested === 'dark') setPrefs(p => ({ ...p, theme: requested })); };
+    window.addEventListener('nexus:widget-theme-request', handleWidgetTheme);
+    return () => window.removeEventListener('nexus:widget-theme-request', handleWidgetTheme);
+  }, []);
+
+  useEffect(() => {
+    const refreshLinks = () => { try { const v = JSON.parse(localStorage.getItem('nexus.saved-apps.v1') || '[]'); setSavedLinks(Array.isArray(v) ? v.filter((l:any) => l && typeof l.title === 'string' && typeof l.url === 'string') : []); } catch { setSavedLinks([]); } };
+    window.addEventListener('nexus:saved-links-updated', refreshLinks);
+    window.addEventListener('storage', refreshLinks);
+    return () => { window.removeEventListener('nexus:saved-links-updated', refreshLinks); window.removeEventListener('storage', refreshLinks); };
+  }, []);
 
   /* ── Splash → screen ────────────────────────────────────────────────── */
   useEffect(() => {
     const t = setTimeout(() => {
-      setScreen(!passwordRecord || sessionStorage.getItem(SESSION_UNLOCKED) === '1' ? 'desktop' : 'lock');
+      let unlocked = false;
+      try { unlocked = sessionStorage.getItem(SESSION_UNLOCKED) === '1'; } catch { /* Continue to the lock screen when session storage is unavailable. */ }
+      setScreen(!passwordRecord || unlocked ? 'desktop' : 'lock');
     }, SPLASH_MS);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleUnlock = () => { sessionStorage.setItem(SESSION_UNLOCKED, '1'); setScreen('desktop'); };
+  const handleUnlock = () => { try { sessionStorage.setItem(SESSION_UNLOCKED, '1'); } catch { /* Session persistence is optional. */ } setScreen('desktop'); };
 
   /* ── Clock ──────────────────────────────────────────────────────────── */
   useEffect(() => {
@@ -355,26 +385,44 @@ export function App() {
     return () => clearInterval(iv);
   }, [prefs.showSeconds]);
 
-  /* ── Message rotation ───────────────────────────────────────────────── */
-  useEffect(() => {
-    if (messages.length === 0) return;
-    const ms = prefs.msgRefreshMins * 60 * 1000;
-    const iv = setInterval(() => {
-      setMsgIndex(i => {
-        const next = Math.floor(Math.random() * messages.length);
-        return next === i ? (i + 1) % messages.length : next;
-      });
-    }, ms);
-    return () => clearInterval(iv);
-  }, [prefs.msgRefreshMins, messages.length]);
-
   /* ── Persist ─────────────────────────────────────────────────────────── */
   useEffect(() => { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(prefs)); } catch {} }, [prefs]);
   useEffect(() => { try { localStorage.setItem(PINNED_DESKTOP_KEY, JSON.stringify(pinnedDesktop)); } catch {} }, [pinnedDesktop]);
   useEffect(() => { try { localStorage.setItem(PINNED_DOCK_KEY, JSON.stringify(pinnedDock)); } catch {} }, [pinnedDock]);
   useEffect(() => { try { localStorage.setItem(DESKTOP_POS_KEY, JSON.stringify(desktopPos)); } catch {} }, [desktopPos]);
   useEffect(() => { saveMessages(messages); }, [messages]);
+  useEffect(() => {
+    if (!messages.length) { setMessageIndex(0); return; }
+    setMessageIndex(i => i % messages.length);
+    const timer = window.setInterval(() => setMessageIndex(i => (i + 1) % Math.max(messages.length, 1)), Math.max(1, prefs.msgRefreshMins) * 60_000);
+    return () => window.clearInterval(timer);
+  }, [messages.length, prefs.msgRefreshMins]);
   useEffect(() => { saveWidgets(widgets); }, [widgets]);
+
+  /* Keep floating windows reachable when the browser viewport changes. */
+  useEffect(() => {
+    const handleViewportResize = () => {
+      setWindowState(state => {
+        let changed = false;
+        const windows = state.windows.map(win => {
+          if (win.status === 'maximized') {
+            if (!win.restoreBounds) return win;
+            const restoreBounds = clampBounds(win.restoreBounds, window.innerWidth, window.innerHeight);
+            if (restoreBounds.x === win.restoreBounds.x && restoreBounds.y === win.restoreBounds.y && restoreBounds.width === win.restoreBounds.width && restoreBounds.height === win.restoreBounds.height) return win;
+            changed = true;
+            return { ...win, restoreBounds };
+          }
+          const bounds = clampBounds(win.bounds, window.innerWidth, window.innerHeight);
+          if (bounds.x === win.bounds.x && bounds.y === win.bounds.y && bounds.width === win.bounds.width && bounds.height === win.bounds.height) return win;
+          changed = true;
+          return { ...win, bounds };
+        });
+        return changed ? { ...state, windows } : state;
+      });
+    };
+    window.addEventListener('resize', handleViewportResize);
+    return () => window.removeEventListener('resize', handleViewportResize);
+  }, []);
 
   /* ── Keyboard ────────────────────────────────────────────────────────── */
   useEffect(() => {
@@ -382,7 +430,7 @@ export function App() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setMenuOpen(o => !o); setSearchQuery(''); }
       if (e.key === 'Escape') {
         setMenuOpen(false); setLauncherActionMenu(null); setIconActionMenu(null);
-        setSelectedIcon(null); setCtxMenu(null); setTrayOpen(false);
+        setSelectedIcon(null); setCtxMenu(null); setTrayOpen(false); setChangelogOpen(false);
       }
       if (e.key === 'F2') setArrangeMode(v => !v);
     };
@@ -454,7 +502,6 @@ export function App() {
   const openAppIds = useMemo(() => {
     const seen = new Set<AppId>();
     return windowState.windows
-      .filter(w => w.status !== 'minimized')
       .map(w => w.appId)
       .filter(id => { if (seen.has(id)) return false; seen.add(id); return true; });
   }, [windowState.windows]);
@@ -498,17 +545,18 @@ export function App() {
   if (screen === 'lock')   return <LockScreen now={now} wallpaper={prefs.wallpaper} theme={prefs.theme} passwordRecord={passwordRecord} onUnlock={handleUnlock} />;
 
   const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...(prefs.showSeconds ? { second: '2-digit' } : {}) });
-  const currentMsg = messages[msgIndex % messages.length]?.text ?? '';
 
   /* ── Render desktop ──────────────────────────────────────────────────── */
   return (
     <div className={`desktop theme-${prefs.theme} wallpaper-${prefs.wallpaper}`} onClick={closeAll}>
       {/* Wallpaper blobs */}
-      <div className="desktop-wallpaper" aria-hidden>
+      <div key={prefs.wallpaper} className="desktop-wallpaper wallpaper-transition" aria-hidden>
         <div className="wp-blob wp-blob-1" />
         <div className="wp-blob wp-blob-2" />
         <div className="wp-blob wp-blob-3" />
       </div>
+
+      {messages.length > 0 && <div className="desktop-message" key={messages[messageIndex % messages.length]?.id || messageIndex} aria-live="polite"><span>{messages[messageIndex % messages.length]?.text}</span></div>}
 
       {/* ── Desktop canvas ── */}
       <section
@@ -522,11 +570,6 @@ export function App() {
           setMenuOpen(false);
         }}
       >
-        {/* Rotating desktop message */}
-        <div className="desktop-msg" aria-live="polite">
-          <span className="dw-text" key={msgIndex}>{currentMsg}</span>
-        </div>
-
         {/* Pinned desktop icons */}
         {pinnedDesktop.map((id, index) => {
           const app = getAppDefinition(id); if (!app) return null;
@@ -557,6 +600,8 @@ export function App() {
             onOpenLauncher={() => setMenuOpen(true)}
             onToggleArrange={() => setArrangeMode(v => !v)}
             arrangeMode={arrangeMode}
+            wallpaper={prefs.wallpaper}
+            onWallpaperChange={wallpaper => setPrefs(p => ({ ...p, wallpaper }))}
           />
         )}
 
@@ -599,12 +644,12 @@ export function App() {
 
       {widgets.filter((widget) => widget.visible && widget.id !== previewWidget?.id).map((widget) => (
         <section key={widget.id} className="desktop-widget" style={{ left: widget.bounds.x, top: widget.bounds.y, width: widget.bounds.width, height: widget.bounds.height }}>
-          <WidgetRuntime widget={widget} onOpenApp={(id) => { if (APP_REGISTRY.some((app) => app.id === id)) openApp(id as AppId); }} onOpenUrl={(url) => window.open(url, '_blank', 'noopener,noreferrer')} />
+          <WidgetRuntime widget={widget} theme={prefs.theme} onOpenApp={(id) => { if (APP_REGISTRY.some((app) => app.id === id)) openApp(id as AppId); }} onOpenUrl={(url) => window.open(url, '_blank', 'noopener,noreferrer')} />
         </section>
       ))}
       {previewWidget && (
         <section className="desktop-widget widget-preview" style={{ left: previewWidget.bounds.x, top: previewWidget.bounds.y, width: previewWidget.bounds.width, height: previewWidget.bounds.height }}>
-          <WidgetRuntime widget={previewWidget} onOpenApp={(id) => { if (APP_REGISTRY.some((app) => app.id === id)) openApp(id as AppId); }} onOpenUrl={(url) => window.open(url, '_blank', 'noopener,noreferrer')} />
+          <WidgetRuntime widget={previewWidget} theme={prefs.theme} onOpenApp={(id) => { if (APP_REGISTRY.some((app) => app.id === id)) openApp(id as AppId); }} onOpenUrl={(url) => window.open(url, '_blank', 'noopener,noreferrer')} />
           <button className="widget-preview-close" onClick={() => setPreviewWidget(null)}>Close preview</button>
         </section>
       )}
@@ -623,6 +668,7 @@ export function App() {
               <input autoFocus value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search apps…" aria-label="Search" />
               {searchQuery && <button className="search-clear" onClick={() => setSearchQuery('')}><X size={11} /></button>}
             </label>
+            {savedLinks.length > 0 && <div className="launcher-saved-links"><div className="launcher-saved-heading"><span>Saved links</span><span>{savedLinks.length}</span></div><div className="launcher-saved-list">{savedLinks.slice(0, 6).map(link => <button key={link.id} title={link.url} onClick={() => { try { const u = new URL(link.url); if (u.protocol === 'https:' || u.protocol === 'http:') window.open(u.href, '_blank', 'noopener,noreferrer'); } catch {} setMenuOpen(false); }}><span className="saved-link-favicon">{link.title.slice(0,1).toUpperCase()}</span><span>{link.title}</span><ExternalLink size={11} /></button>)}</div></div>}
             <div className="launcher-bar">
               <span>Applications</span>
               <div className="view-toggle">
@@ -657,7 +703,12 @@ export function App() {
               })}
               {visibleApps.length === 0 && <div className="l-empty">No apps found.</div>}
             </div>
-            <div className="launcher-footer"><span className="l-dot" /><span>Local workspace · No account</span></div>
+            <div className="launcher-footer">
+              <span className="launcher-footer-spacer" />
+              <button className="changelog-trigger" onClick={() => { setChangelogOpen(true); setMenuOpen(false); }}>
+                <History size={13} /><span>Changelog</span><span className="version-pill">v0.7.0</span>
+              </button>
+            </div>
           </section>
         </>
       )}
@@ -667,7 +718,7 @@ export function App() {
         {dockAppIds.map(id => {
           const app = getAppDefinition(id); if (!app) return null;
           const Icon = appIcon(id);
-          const openWins = windowState.windows.filter(w => w.appId === id && w.status !== 'minimized');
+          const openWins = windowState.windows.filter(w => w.appId === id);
           const isActive = openWins.some(w => w.id === windowState.activeWindowId);
           const isPinned = pinnedDock.includes(id);
           const existingWin = [...windowState.windows].reverse().find(w => w.appId === id);
@@ -710,10 +761,45 @@ export function App() {
         <TrayMenu
           now={now} theme={prefs.theme} hasPassword={Boolean(passwordRecord)}
           onToggleTheme={() => setPrefs(p => ({ ...p, theme: p.theme === 'light' ? 'dark' : 'light' }))}
-          onLock={() => { sessionStorage.removeItem(SESSION_UNLOCKED); setScreen('lock'); }}
+          onLock={() => { try { sessionStorage.removeItem(SESSION_UNLOCKED); } catch { /* Locking the current view still works. */ } setScreen('lock'); }}
           onSetupPassword={() => setShowSetup(true)}
           onClose={() => setTrayOpen(false)}
+          wallpaper={prefs.wallpaper}
+          onWallpaperChange={wallpaper => setPrefs(p => ({ ...p, wallpaper }))}
         />
+      )}
+
+      {/* ── Changelog modal ── */}
+      {changelogOpen && (
+        <div className="changelog-scrim" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setChangelogOpen(false); }}>
+          <section className="changelog-modal" role="dialog" aria-modal="true" aria-labelledby="changelog-title">
+            <header className="changelog-hero">
+              <div className="changelog-hero-top">
+                <span className="changelog-mark"><History size={19} /></span>
+                <button className="changelog-close" onClick={() => setChangelogOpen(false)} aria-label="Close changelog"><X size={15} /></button>
+              </div>
+              <div className="changelog-kicker">PRODUCT NOTES · RELEASE HISTORY</div>
+              <div className="changelog-title-row">
+                <h2 id="changelog-title">Changelog</h2>
+                <span className="changelog-version">v0.7.0</span>
+              </div>
+              <p>Widget Studio gets its own workspace, with a clearer widget API for theme and local data.</p>
+            </header>
+            <div className="changelog-body">
+              <div className="changelog-release-line"><span className="changelog-release-dot" /><div><strong>Current release · v0.7.0</strong><span>October 24, 2026 · Widget Studio</span></div></div>
+              <section className="changelog-group"><h3><span className="change-icon added"><Sparkles size={14} /></span>v0.7.0 · Added</h3><ul><li>Widget Studio is now a standalone Nexus app with its own workspace and widget library sidebar.</li><li>Widget API for reading the active theme and requesting light/dark theme changes.</li><li>Namespaced local storage API with read, list, write, and remove operations.</li></ul></section>
+              <section className="changelog-group"><h3><span className="change-icon updated"><Wrench size={14} /></span>v0.7.0 · Updated</h3><ul><li>Settings no longer includes the widget editor; widget creation and management live in Widget Studio.</li><li>Dropdown controls have consistent styling, focus states, and theme-aware colors.</li></ul></section>
+              <section className="changelog-group"><h3><span className="change-icon fixed"><CheckCircle2 size={14} /></span>v0.7.0 · Fixed</h3><ul><li>Widget local values are initialized from host storage and refreshed in the iframe after successful writes or removals.</li><li>Widget local storage falls back safely when stored data is invalid or unavailable.</li></ul></section>
+              <section className="changelog-group"><h3><span className="change-icon removed"><Trash2 size={14} /></span>v0.7.0 · Removed</h3><ul><li>Removed Widget Studio from the Settings sidebar; the feature itself remains available as a dedicated app.</li></ul></section>
+              <div className="changelog-version-divider"><span>PREVIOUS RELEASES</span></div>
+              <section className="changelog-group"><h3><span className="change-icon added"><Sparkles size={14} /></span>v0.6.0 · Settings and desktop polish</h3><ul><li>Added categorized Settings navigation for Appearance, Desktop, Desktop Messages, and Privacy.</li><li>Restored rotating desktop messages with editable defaults and a configurable refresh interval.</li><li>Added smooth wallpaper transitions and reduced-motion handling.</li></ul><p><strong>Removed:</strong> Nothing intentionally removed.</p></section>
+              <section className="changelog-group"><h3><span className="change-icon updated"><Wrench size={14} /></span>v0.5.0 · Desktop experience</h3><ul><li>Added wallpaper controls to desktop and calendar menus, plus additional wallpaper palettes.</li><li>Improved launcher quick access for saved links and added foundations for host-mediated widget theme/storage APIs.</li><li>Improved minimized-window and dock restoration behavior.</li></ul><p><strong>Removed:</strong> The “Local workspace · No account” footer message.</p></section>
+              <section className="changelog-group"><h3><span className="change-icon fixed"><CheckCircle2 size={14} /></span>v0.4.0 · Desktop UI polish</h3><ul><li>Added the Changelog launcher entry and release-notes modal.</li><li>Improved viewport-aware window handling, widget state foundations, URL validation, and lock-screen storage resilience.</li></ul><p><strong>Removed:</strong> Nothing intentionally removed.</p></section>
+              <section className="changelog-group"><h3><span className="change-icon added"><Sparkles size={14} /></span>v0.3.x and earlier · Initial foundation</h3><ul><li>Introduced the OS-like new-tab workspace, launcher, dock, floating windows, desktop shortcuts, themes, wallpapers, clock, Settings, Saved links, Scratchpad, and early Widget Studio.</li></ul></section>
+            </div>
+            <footer className="changelog-footer"><span><span className="l-dot" /> Made for your workspace</span><button onClick={() => setChangelogOpen(false)}>Back to Nexus <ChevronR size={13} /></button></footer>
+          </section>
+        </div>
       )}
 
       {/* ── Password setup overlay ── */}
