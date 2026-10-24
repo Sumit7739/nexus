@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express, { type Request, type Response } from 'express';
@@ -21,7 +22,16 @@ interface WebSearchSource {
   snippet: string;
 }
 
-const PORT = 3000;
+interface YouTubeSearchItem {
+  id: string;
+  title: string;
+  channelTitle: string;
+  description: string;
+  publishedAt: string;
+  thumbnail: string;
+}
+
+const PORT = Number(process.env.PORT ?? 5173);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function getDomain(rawUrl: string): string {
@@ -374,6 +384,68 @@ async function generateGeminiOverview(
 async function createApp() {
   const app = express();
   app.use(express.json({ limit: '256kb' }));
+
+  app.get('/api/youtube/search', async (req: Request, res: Response) => {
+    const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const category = req.query.category === 'music' ? '10' : '';
+    const apiKey = process.env.YOUTUBE_API_KEY?.trim();
+    if (!apiKey) {
+      res.status(503).json({ error: 'YouTube search is not configured. Set YOUTUBE_API_KEY on the server.' });
+      return;
+    }
+    if (query.length < 2 || query.length > 120) {
+      res.status(400).json({ error: 'Enter a search with between 2 and 120 characters.' });
+      return;
+    }
+
+    try {
+      const endpoint = new URL('https://www.googleapis.com/youtube/v3/search');
+      endpoint.search = new URLSearchParams({
+        key: apiKey,
+        part: 'snippet',
+        q: query,
+        type: 'video',
+        maxResults: '12',
+        safeSearch: 'moderate',
+        ...(category ? { videoCategoryId: category } : {}),
+      }).toString();
+      const response = await fetch(endpoint, { signal: AbortSignal.timeout(8000) });
+      const data = (await response.json()) as {
+        error?: { message?: string };
+        items?: Array<{
+          id?: { videoId?: string };
+          snippet?: {
+            title?: string;
+            channelTitle?: string;
+            description?: string;
+            publishedAt?: string;
+            thumbnails?: { medium?: { url?: string }; default?: { url?: string } };
+          };
+        }>;
+      };
+      if (!response.ok) {
+        res.status(502).json({ error: data.error?.message || 'YouTube search failed.' });
+        return;
+      }
+      const items: YouTubeSearchItem[] = (data.items ?? []).flatMap(item => {
+        const id = item.id?.videoId;
+        const snippet = item.snippet;
+        if (!id || !snippet?.title) return [];
+        return [{
+          id,
+          title: decodeHtmlEntities(snippet.title),
+          channelTitle: decodeHtmlEntities(snippet.channelTitle ?? 'YouTube'),
+          description: decodeHtmlEntities(snippet.description ?? ''),
+          publishedAt: snippet.publishedAt ?? '',
+          thumbnail: snippet.thumbnails?.medium?.url ?? snippet.thumbnails?.default?.url ?? '',
+        }];
+      });
+      res.json({ items });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'YouTube search failed.';
+      res.status(502).json({ error: message });
+    }
+  });
 
   app.post('/api/search', async (req: Request, res: Response) => {
     const body = (req.body ?? {}) as SearchRequestBody;

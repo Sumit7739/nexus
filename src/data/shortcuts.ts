@@ -39,9 +39,21 @@ export function normalizeHttpUrl(value: string): string | null {
     if (!parsed.hostname || (!parsed.hostname.includes('.') && parsed.hostname !== 'localhost')) {
       return null;
     }
+
     return parsed.href;
   } catch {
     return null;
+  }
+}
+
+export function isYouTubeUrl(value: string): boolean {
+  const normalized = normalizeHttpUrl(value);
+  if (!normalized) return false;
+  try {
+    const hostname = new URL(normalized).hostname.toLowerCase().replace(/^www\./, '');
+    return hostname === 'youtube.com' || hostname.endsWith('.youtube.com') || hostname === 'youtu.be';
+  } catch {
+    return false;
   }
 }
 

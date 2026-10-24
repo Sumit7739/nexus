@@ -1199,8 +1199,8 @@
 .swatch-ocean { background:linear-gradient(135deg,#b7d9e8,#b8e7df); }.swatch-ember { background:linear-gradient(135deg,#f2b8a1,#e8b77d); }.swatch-lavender { background:linear-gradient(135deg,#d6c9f5,#edcfe8); }.swatch-midnight { background:linear-gradient(135deg,#454875,#235c66); }
 .swatch-rose { background:linear-gradient(135deg,#f3cbd5,#e7d5f6); }.swatch-mono { background:linear-gradient(135deg,#d8d8d8,#bfc4c8); }.swatch-citrus { background:linear-gradient(135deg,#f4edb4,#c9e7bd); }.swatch-glacier { background:linear-gradient(135deg,#c8e4f7,#d1e9e5); }
 /* Give launcher more breathing room and let saved links live above apps. */
-.app-launcher { width:min(436px,calc(100vw - 28px)); max-height:min(80vh,680px); }
-.launcher-list { max-height: min(52vh,430px); }
+.app-launcher { width:min(560px,calc(100vw - 28px)); max-height:min(86vh,780px); }
+.launcher-list { max-height: min(62vh,540px); }
 .launcher-saved-links { padding:10px 14px 8px;border-bottom:1px solid var(--rule); }
 .launcher-saved-heading { display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;color:var(--ink-4);font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase; }
 .launcher-saved-list { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px; }
@@ -1907,5 +1907,4 @@
     animation: none;
   }
 }
-
 

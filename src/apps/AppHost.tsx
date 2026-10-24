@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
-  ArrowUpRight, Check, Copy, Crosshair, Download, ExternalLink,
-  Globe2, HardDriveDownload, MessageSquareQuote, Monitor, Palette, Pencil, Pin, Plus, RefreshCw, RotateCcw, Search, Shield, Trash2, Upload, X,
+  ArrowLeft, ArrowRight, ArrowUpRight, Check, Clock3, Copy, Crosshair, Download, ExternalLink,
+  Globe2, HardDriveDownload, Headphones, Home, Link2, ListVideo, MessageSquareQuote, Monitor, Palette, Pause, Pencil, Pin, Play, Plus, RefreshCw, RotateCcw, Search, Shield, SkipBack, SkipForward, Trash2, Upload, Volume2, VolumeX, X,
 } from 'lucide-react';
 import type { AppId, CoreAppId } from '../window-manager/types';
 import type { DesktopMessage } from '../data/messages';
@@ -12,6 +12,7 @@ import { instantiateTemplate, WIDGET_API_ENTRIES, WIDGET_TEMPLATES } from '../wi
 import {
   extractHostname,
   fromShortcutAppId,
+  isYouTubeUrl,
   isShortcutAppId,
   normalizeHttpUrl,
   readShortcuts,
@@ -77,6 +78,7 @@ export function AppHost({ appId, settings }: { appId: AppId; settings?: Settings
         </div>
       );
     }
+    if (isYouTubeUrl(shortcut.url)) return <YouTubeApp />;
     return (
       <ShortcutWebApp
         shortcut={shortcut}
@@ -93,6 +95,7 @@ export function AppHost({ appId, settings }: { appId: AppId; settings?: Settings
   switch (appId) {
     case 'browser': return <BrowserApp settings={settings} />;
     case 'youtube': return <YouTubeApp />;
+    case 'music': return <MusicApp />;
     case 'notes': return <ScratchpadApp />;
     case 'bookmarks': return <BookmarksApp settings={settings} />;
     case 'settings': return settings ? <SettingsApp settings={settings} /> : <div className="empty-state"><span>Settings unavailable.</span></div>;
@@ -246,32 +249,359 @@ function ShortcutWebApp({
 }
 
 /* ── YouTube ──────────────────────────────────────────────────────────────── */
+interface YouTubeVideo {
+  id: string;
+  title: string;
+  channelTitle: string;
+  description: string;
+  publishedAt: string;
+  thumbnail: string;
+}
+
+const YOUTUBE_HISTORY_KEY = 'nexus-youtube-history-v1';
+
 function YouTubeApp() {
-  const [video, setVideo] = useState('jfKfPfyJRdk');
-  const [input, setInput] = useState('https://www.youtube.com/watch?v=jfKfPfyJRdk');
-  const [error, setError] = useState('');
-  const load = () => {
-    const raw = input.trim(); let id = raw;
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<YouTubeVideo[]>([]);
+  const [history, setHistory] = useState<YouTubeVideo[]>(() => {
     try {
-      const p = new URL(raw.includes('://') ? raw : `https://${raw}`);
-      if (p.hostname.includes('youtu.be')) id = p.pathname.slice(1);
-      else if (p.hostname.includes('youtube.com')) id = p.searchParams.get('v') || p.pathname.split('/').filter(Boolean).pop() || '';
-    } catch { }
-    if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) { setError('Paste a YouTube URL or 11-character video ID.'); return; }
-    setVideo(id); setError('');
+      const raw = localStorage.getItem(YOUTUBE_HISTORY_KEY);
+      return raw ? JSON.parse(raw) as YouTubeVideo[] : [];
+    } catch {
+      return [];
+    }
+  });
+  const [video, setVideo] = useState<YouTubeVideo | null>(() => history[0] ?? null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [section, setSection] = useState<'home' | 'history' | 'url'>('home');
+  const [videoUrl, setVideoUrl] = useState('');
+  const [searchTrail, setSearchTrail] = useState<Array<{ query: string; results: YouTubeVideo[] }>>([]);
+  const [searchTrailIndex, setSearchTrailIndex] = useState(-1);
+
+  const playVideo = (next: YouTubeVideo) => {
+    setVideo(next);
+    setSection('home');
+    setHistory(previous => {
+      const updated = [next, ...previous.filter(item => item.id !== next.id)].slice(0, 20);
+      try { localStorage.setItem(YOUTUBE_HISTORY_KEY, JSON.stringify(updated)); } catch {}
+      return updated;
+    });
   };
+
+  const clearHistory = () => {
+    setHistory([]);
+    try { localStorage.removeItem(YOUTUBE_HISTORY_KEY); } catch {}
+  };
+
+  const playFromUrl = (event: FormEvent) => {
+    event.preventDefault();
+    const raw = videoUrl.trim();
+    let id = raw;
+    try {
+      const parsed = new URL(raw.includes('://') ? raw : `https://${raw}`);
+      const hostname = parsed.hostname.toLowerCase().replace(/^www\./, '');
+      if (hostname === 'youtu.be') {
+        id = parsed.pathname.split('/').filter(Boolean)[0] ?? '';
+      } else if (hostname === 'youtube.com' || hostname.endsWith('.youtube.com')) {
+        id = parsed.searchParams.get('v') ?? parsed.pathname.split('/').filter(Boolean).pop() ?? '';
+      }
+    } catch {
+      id = raw;
+    }
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) {
+      setError('Enter a valid YouTube URL or 11-character video ID.');
+      return;
+    }
+    playVideo({
+      id,
+      title: `YouTube video ${id}`,
+      channelTitle: 'YouTube',
+      description: '',
+      publishedAt: '',
+      thumbnail: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
+    });
+    setVideoUrl('');
+    setError('');
+  };
+
+  const runSearch = async (trimmed: string, record = true) => {
+    if (trimmed.length < 2) {
+      setError('Enter at least two characters to search YouTube.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/youtube/search?q=${encodeURIComponent(trimmed)}`);
+      const data = await response.json() as { items?: YouTubeVideo[]; error?: string };
+      if (!response.ok) throw new Error(data.error || 'YouTube search failed.');
+      setResults(data.items ?? []);
+      setQuery(trimmed);
+      if (record) {
+        setSearchTrail(previous => {
+          const next = [...previous.slice(0, searchTrailIndex + 1), { query: trimmed, results: data.items ?? [] }];
+          setSearchTrailIndex(next.length - 1);
+          return next;
+        });
+      }
+
+      if (!data.items?.length) setError('No videos found for that search.');
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : 'YouTube search failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const search = async (event: FormEvent) => {
+    event.preventDefault();
+    await runSearch(query.trim());
+  };
+
+  const navigateSearch = (direction: -1 | 1) => {
+    const targetIndex = searchTrailIndex + direction;
+    const target = searchTrail[targetIndex];
+    if (!target) return;
+    setSearchTrailIndex(targetIndex);
+    setQuery(target.query);
+    setResults(target.results);
+    setVideo(null);
+    setError('');
+  };
+
+  const refreshSearch = () => {
+    if (query.trim().length >= 2) void runSearch(query.trim(), false);
+  };
+
+  const clearSearch = () => {
+    setQuery('');
+    setResults([]);
+    setVideo(null);
+    setError('');
+    setSearchTrail([]);
+    setSearchTrailIndex(-1);
+  };
+
   return (
     <div className="youtube-app">
-      <form className="address-bar" onSubmit={e => { e.preventDefault(); load(); }}>
-        <input className="address-input" value={input} onChange={e => setInput(e.target.value)} aria-label="YouTube video URL" />
-        <button type="submit" className="primary-btn">Play</button>
-      </form>
-      {error && <p className="inline-error">{error}</p>}
-      <div className="video-stage">
-        <iframe title="YouTube player" src={`https://www.youtube-nocookie.com/embed/${video}`} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen />
+      <div className="youtube-shell">
+        <aside className="youtube-sidebar">
+          <div className="youtube-brand"><span className="youtube-brand-mark"><Play size={13} fill="currentColor" /></span><strong>Nexus Tube</strong></div>
+          <nav className="youtube-nav" aria-label="YouTube sections">
+            <button type="button" className={section === 'home' ? 'is-active' : ''} onClick={() => setSection('home')}><Home size={15} /><span>Home</span></button>
+            <button type="button" className={section === 'history' ? 'is-active' : ''} onClick={() => setSection('history')}><Clock3 size={15} /><span>Watch history</span><small>{history.length}</small></button>
+            <button type="button" className={section === 'url' ? 'is-active' : ''} onClick={() => { setSection('url'); setError(''); }}><Link2 size={15} /><span>Play from URL</span></button>
+          </nav>
+          <div className="youtube-sidebar-divider" />
+          <div className="youtube-sidebar-label">Your library</div>
+          <div className="youtube-library-item"><ListVideo size={14} /><span>Saved locally</span></div>
+          <div className="youtube-sidebar-spacer" />
+          {history.length > 0 && <button type="button" className="youtube-clear-history" onClick={clearHistory}><Trash2 size={13} /> Clear history</button>}
+        </aside>
+        <main className="youtube-main">
+          {section !== 'url' && (
+            <div className="youtube-search-row">
+              <form className="youtube-search-bar" onSubmit={search}>
+                <Search size={15} />
+                <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search videos…" aria-label="Search YouTube videos" />
+                <button type="submit" className="primary-btn" disabled={loading}>{loading ? 'Searching…' : 'Search'}</button>
+              </form>
+              <div className="youtube-search-actions" aria-label="Search controls">
+                <button type="button" className="youtube-icon-action" onClick={() => navigateSearch(-1)} disabled={searchTrailIndex <= 0} title="Previous search" aria-label="Previous search"><ArrowLeft size={14} /></button>
+                <button type="button" className="youtube-icon-action" onClick={() => navigateSearch(1)} disabled={searchTrailIndex < 0 || searchTrailIndex >= searchTrail.length - 1} title="Next search" aria-label="Next search"><ArrowRight size={14} /></button>
+                <button type="button" className="youtube-icon-action" onClick={refreshSearch} disabled={loading || query.trim().length < 2} title="Refresh search" aria-label="Refresh search"><RefreshCw size={14} /></button>
+                <button type="button" className="youtube-icon-action" onClick={clearSearch} disabled={!query && !results.length && !video} title="Clear screen" aria-label="Clear screen"><X size={14} /></button>
+              </div>
+            </div>
+          )}
+          {error && <p className="inline-error youtube-error">{error}</p>}
+          {section === 'url' ? (
+            <section className="youtube-url-view">
+              <div className="youtube-url-hero">
+                <span className="eyebrow">Direct playback</span>
+                <h3>Play a video from a URL</h3>
+                <p>Paste a YouTube link or enter an 11-character video ID to play it in Nexus.</p>
+                <form className="youtube-url-bar" onSubmit={playFromUrl}>
+                  <Link2 size={15} />
+                  <input autoFocus value={videoUrl} onChange={event => setVideoUrl(event.target.value)} placeholder="https://youtube.com/watch?v=…" aria-label="Play YouTube URL" />
+                  <button type="submit" className="primary-btn">Play video</button>
+                </form>
+                <small>Supported: youtube.com, youtu.be, embed links, and video IDs.</small>
+              </div>
+              {video && <button type="button" className="youtube-return-link" onClick={() => setSection('home')}><Play size={13} /> Return to currently playing video</button>}
+            </section>
+          ) : section === 'history' ? (
+            <section className="youtube-history-view">
+              <div className="youtube-content-heading"><div><span className="eyebrow">Your library</span><h3>Watch history</h3></div><span>{history.length} saved</span></div>
+              <div className="youtube-video-grid">
+                {history.map(item => <YouTubeVideoCard key={item.id} item={item} activeId={video?.id} onPlay={playVideo} />)}
+              </div>
+              {!history.length && <div className="youtube-empty"><Clock3 size={28} /><strong>Your history is empty</strong><span>Videos you play will be saved here on this device.</span></div>}
+            </section>
+          ) : (
+            <section className="youtube-home-view">
+              <div className="youtube-player-column">
+                {video ? (
+                  <>
+                    <div className="video-stage">
+                      <iframe title={video.title} src={`https://www.youtube-nocookie.com/embed/${video.id}?rel=0`} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen />
+                    </div>
+                    <div className="youtube-now-playing"><strong>{video.title}</strong><span>{video.channelTitle}</span></div>
+                  </>
+                ) : !results.length && <div className="youtube-empty"><Play size={28} /><strong>Search for something to watch</strong><span>Videos you play will appear in your local history.</span></div>}
+              </div>
+              {(results.length > 0 || history.length > 0) && (
+                <div className="youtube-discovery">
+                  <div className="youtube-content-heading"><div><span className="eyebrow">{results.length ? 'Discover' : 'Continue watching'}</span><h3>{results.length ? 'Search results' : 'Recently watched'}</h3></div><span>{results.length || history.length} videos</span></div>
+                  <div className="youtube-video-grid">{(results.length ? results : history).map(item => <YouTubeVideoCard key={item.id} item={item} activeId={video?.id} onPlay={playVideo} />)}</div>
+                </div>
+              )}
+            </section>
+          )}
+        </main>
       </div>
-      <div className="web-app-footer"><span>Official YouTube embedded player.</span><a href={`https://www.youtube.com/watch?v=${video}`} target="_blank" rel="noopener noreferrer"><ExternalLink size={11} /> Watch on YouTube</a></div>
+      <div className="web-app-footer"><span>Search and history stay in this Nexus workspace.</span>{video && <a href={`https://www.youtube.com/watch?v=${video.id}`} target="_blank" rel="noopener noreferrer"><ExternalLink size={11} /> Watch on YouTube</a>}</div>
     </div>
+  );
+}
+
+const MUSIC_HISTORY_KEY = 'nexus-music-history-v1';
+
+function MusicApp() {
+  const [query, setQuery] = useState('');
+  const [tracks, setTracks] = useState<YouTubeVideo[]>([]);
+  const [history, setHistory] = useState<YouTubeVideo[]>(() => {
+    try {
+      const raw = localStorage.getItem(MUSIC_HISTORY_KEY);
+      return raw ? JSON.parse(raw) as YouTubeVideo[] : [];
+    } catch {
+      return [];
+    }
+  });
+  const [current, setCurrent] = useState<YouTubeVideo | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const playerRef = useRef<HTMLIFrameElement>(null);
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [isMuted, setIsMuted] = useState(false);
+
+  const playTrack = (track: YouTubeVideo) => {
+    setCurrent(track);
+    setIsPlaying(true);
+    setIsMuted(false);
+    setHistory(previous => {
+      const next = [track, ...previous.filter(item => item.id !== track.id)].slice(0, 30);
+      try { localStorage.setItem(MUSIC_HISTORY_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
+  const sendPlayerCommand = (func: string, args: unknown[] = []) => {
+    playerRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ event: 'command', func, args }),
+      'https://www.youtube-nocookie.com'
+    );
+  };
+
+  const togglePlayback = () => {
+    sendPlayerCommand(isPlaying ? 'pauseVideo' : 'playVideo');
+    setIsPlaying(value => !value);
+  };
+
+  const visibleQueue = tracks.length ? tracks : history;
+  const currentIndex = current ? visibleQueue.findIndex(item => item.id === current.id) : -1;
+  const playRelativeTrack = (offset: number) => {
+    const next = visibleQueue[currentIndex + offset];
+    if (next) playTrack(next);
+  };
+
+  const toggleMute = () => {
+    sendPlayerCommand(isMuted ? 'unMute' : 'mute');
+    setIsMuted(value => !value);
+  };
+
+  const searchMusic = async (event: FormEvent) => {
+    event.preventDefault();
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setError('Search for an artist, album, song, or mood.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/youtube/search?q=${encodeURIComponent(trimmed)}&category=music`);
+      const data = await response.json() as { items?: YouTubeVideo[]; error?: string };
+      if (!response.ok) throw new Error(data.error || 'Music search failed.');
+      setTracks(data.items ?? []);
+      if (!data.items?.length) setError('No music found for that search.');
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : 'Music search failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const clearHistory = () => {
+    setHistory([]);
+    try { localStorage.removeItem(MUSIC_HISTORY_KEY); } catch {}
+  };
+
+  return (
+    <div className="music-app">
+      <header className="music-header">
+        <div className="music-brand"><span className="music-brand-icon"><Headphones size={17} /></span><div><span className="eyebrow">Nexus audio</span><h3>Music</h3></div></div>
+        <span className="music-header-note">Powered by YouTube search</span>
+      </header>
+      <main className="music-main">
+        <form className="music-search" onSubmit={searchMusic}>
+          <Search size={16} />
+          <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search artists, songs, albums…" aria-label="Search music" />
+          <button type="submit" className="primary-btn" disabled={loading}>{loading ? 'Searching…' : 'Find music'}</button>
+        </form>
+        {error && <p className="inline-error music-error">{error}</p>}
+        {current ? (
+          <section className="music-now-playing">
+            <div className="music-artwork">{current.thumbnail ? <img src={current.thumbnail} alt="" /> : <Headphones size={40} />}</div>
+            <div className="music-track-copy">
+              <span className="eyebrow">Now playing</span><h2>{current.title}</h2><p>{current.channelTitle}</p>
+              <div className="music-controls" aria-label="Playback controls">
+                <button type="button" onClick={() => playRelativeTrack(-1)} disabled={currentIndex <= 0} title="Previous track" aria-label="Previous track"><SkipBack size={16} /></button>
+                <button type="button" className="music-play-button" onClick={togglePlayback} title={isPlaying ? 'Pause' : 'Play'} aria-label={isPlaying ? 'Pause' : 'Play'}>{isPlaying ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
+                <button type="button" onClick={() => playRelativeTrack(1)} disabled={currentIndex < 0 || currentIndex >= visibleQueue.length - 1} title="Next track" aria-label="Next track"><SkipForward size={16} /></button>
+                <button type="button" onClick={toggleMute} title={isMuted ? 'Unmute' : 'Mute'} aria-label={isMuted ? 'Unmute' : 'Mute'}>{isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}</button>
+              </div>
+            </div>
+            <div className="music-audio-shell"><iframe ref={playerRef} title={`Audio player for ${current.title}`} src={`https://www.youtube-nocookie.com/embed/${current.id}?autoplay=1&controls=0&enablejsapi=1&rel=0`} allow="autoplay; encrypted-media" /></div>
+          </section>
+        ) : (
+          <section className="music-hero"><div className="music-hero-orb"><Headphones size={34} /></div><span className="eyebrow">A quieter way to listen</span><h2>Find your next favorite sound.</h2><p>Search YouTube music and listen inside a focused, audio-first workspace.</p></section>
+        )}
+        <section className="music-library">
+          <div className="music-section-heading"><div><span className="eyebrow">{tracks.length ? 'Discover' : 'Your library'}</span><h3>{tracks.length ? 'Search results' : 'Recently played'}</h3></div>{history.length > 0 && <button type="button" className="music-clear" onClick={clearHistory}>Clear history</button>}</div>
+          <div className="music-track-grid">
+            {(tracks.length ? tracks : history).map(track => (
+              <button type="button" className={`music-track-card ${current?.id === track.id ? 'is-active' : ''}`} key={track.id} onClick={() => playTrack(track)}>
+                {track.thumbnail ? <img src={track.thumbnail} alt="" /> : <div className="music-thumb-fallback"><Headphones size={18} /></div>}
+                <span><strong>{track.title}</strong><small>{track.channelTitle}</small></span><Play size={13} />
+              </button>
+            ))}
+          </div>
+          {!tracks.length && !history.length && <p className="music-empty">Your recently played music will appear here.</p>}
+        </section>
+      </main>
+      <footer className="web-app-footer"><span>Audio playback uses YouTube’s supported embedded player; no video is shown in the workspace.</span></footer>
+    </div>
+  );
+}
+
+function YouTubeVideoCard({ item, activeId, onPlay }: { item: YouTubeVideo; activeId?: string; onPlay: (item: YouTubeVideo) => void }) {
+  return (
+    <button type="button" className={`youtube-video-card ${activeId === item.id ? 'is-active' : ''}`} onClick={() => onPlay(item)}>
+      {item.thumbnail ? <img src={item.thumbnail} alt="" /> : <div className="youtube-thumb-fallback"><Play size={14} /></div>}
+      <span><strong>{item.title}</strong><small>{item.channelTitle}</small></span>
+    </button>
   );
 }
 
@@ -1150,7 +1480,7 @@ const SOURCE_FILES: { key: keyof WidgetSource; label: string; hint: string }[] =
   { key: 'json', label: 'widget.json', hint: 'Config' },
 ];
 
-const VALID_CORE_APP_IDS: CoreAppId[] = ['browser', 'youtube', 'notes', 'bookmarks', 'settings', 'widgets'];
+const VALID_CORE_APP_IDS: CoreAppId[] = ['browser', 'youtube', 'music', 'notes', 'bookmarks', 'settings', 'widgets'];
 
 function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
   const [tab, setTab] = useState<'workbench' | 'library' | 'api'>(() =>

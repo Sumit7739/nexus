@@ -31,6 +31,18 @@ npm run build
 npm test
 ```
 
+Optional server-side integrations read credentials from a local `.env` file:
+
+```bash
+cp .env.example .env
+```
+
+- `YOUTUBE_API_KEY` enables video search in the Nexus YouTube app.
+- `GEMINI_API_KEY` enables AI search overviews.
+- `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_CX` enable Google Custom Search results.
+
+Keep `.env` local and never commit its credentials.
+
 The Vite dev server is for UI iteration. Browser extension APIs and New Tab replacement should be tested using the production build.
 
 ## Load in Firefox

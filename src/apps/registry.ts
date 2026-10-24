@@ -1,15 +1,17 @@
-import { Bookmark, Code2, Globe2, Settings2, StickyNote, Youtube } from 'lucide-react';
+import { Bookmark, Code2, Globe2, Headphones, Settings2, StickyNote, Youtube } from 'lucide-react';
 import type { AppDefinition } from './app-types';
 import {
   extractHostname,
   fromShortcutAppId,
+  isYouTubeUrl,
   toShortcutAppId,
   type SavedShortcut,
 } from '../data/shortcuts';
 
 export const APP_REGISTRY: AppDefinition[] = [
   { id: 'browser', name: 'Browser', description: 'Search the web & browse in tabs', icon: Globe2, defaultBounds: { x: 105, y: 54, width: 980, height: 650 }, category: 'web' },
-  { id: 'youtube', name: 'YouTube', description: 'Play a video in a floating window', icon: Youtube, defaultBounds: { x: 150, y: 82, width: 900, height: 590 }, category: 'web' },
+  { id: 'youtube', name: 'YouTube', description: 'Search, play & remember videos', icon: Youtube, defaultBounds: { x: 120, y: 62, width: 1040, height: 680 }, category: 'web' },
+  { id: 'music', name: 'Music', description: 'Audio-first music from YouTube', icon: Headphones, defaultBounds: { x: 160, y: 82, width: 920, height: 620 }, category: 'web' },
   { id: 'notes', name: 'Scratchpad', description: 'Notes, checklists & Markdown', icon: StickyNote, defaultBounds: { x: 170, y: 82, width: 820, height: 560 }, category: 'utility' },
   { id: 'bookmarks', name: 'Saved links', description: 'Web shortcuts & pinned destinations', icon: Bookmark, defaultBounds: { x: 155, y: 75, width: 780, height: 610 }, category: 'utility' },
   { id: 'settings', name: 'Settings', description: 'Personalize your workspace', icon: Settings2, defaultBounds: { x: 170, y: 80, width: 760, height: 610 }, category: 'system' },
@@ -34,7 +36,7 @@ export function shortcutToAppDefinition(shortcut: SavedShortcut): AppDefinition 
 }
 
 export function getAllAppDefinitions(shortcuts: SavedShortcut[] = []): AppDefinition[] {
-  return [...APP_REGISTRY, ...shortcuts.map(shortcutToAppDefinition)];
+  return [...APP_REGISTRY, ...shortcuts.filter(shortcut => !isYouTubeUrl(shortcut.url)).map(shortcutToAppDefinition)];
 }
 
 export function getAppDefinition(id: string, shortcuts: SavedShortcut[] = []): AppDefinition | undefined {
@@ -43,5 +45,6 @@ export function getAppDefinition(id: string, shortcuts: SavedShortcut[] = []): A
   const shortcutId = fromShortcutAppId(id);
   if (!shortcutId) return undefined;
   const found = shortcuts.find((item) => item.id === shortcutId);
+  if (found && isYouTubeUrl(found.url)) return APP_REGISTRY.find(app => app.id === 'youtube');
   return found ? shortcutToAppDefinition(found) : undefined;
 }
