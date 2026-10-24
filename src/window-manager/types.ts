@@ -1,5 +1,9 @@
-export type AppId = 'browser' | 'youtube' | 'notes' | 'bookmarks' | 'settings' | 'widgets';
+export type CoreAppId = 'browser' | 'youtube' | 'notes' | 'bookmarks' | 'settings' | 'widgets';
+export type ShortcutAppId = `shortcut:${string}`;
+export type AppId = CoreAppId | ShortcutAppId;
 export type WindowStatus = 'normal' | 'minimized' | 'maximized';
+export type WindowSnapSide = 'left' | 'right';
+export type SnapZone = WindowSnapSide | 'top';
 
 export interface WindowBounds {
   x: number;
@@ -14,6 +18,7 @@ export interface DesktopWindow {
   title: string;
   bounds: WindowBounds;
   status: WindowStatus;
+  snapZone?: WindowSnapSide;
   restoreBounds?: WindowBounds;
 }
 

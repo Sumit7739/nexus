@@ -1,53 +1,38 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   ArrowUpRight, Check, Copy, Crosshair, Download, ExternalLink,
-  Globe2, Plus, RefreshCw, Search, StickyNote, Trash2, Upload,
+  Globe2, HardDriveDownload, MessageSquareQuote, Monitor, Palette, Pencil, Pin, Plus, RefreshCw, RotateCcw, Search, Shield, Trash2, Upload, X,
 } from 'lucide-react';
-import type { AppId } from '../window-manager/types';
+import type { AppId, CoreAppId } from '../window-manager/types';
 import type { DesktopMessage } from '../data/messages';
 import type { WidgetDefinition, WidgetSource } from '../widgets/types';
 import { createWidget } from '../widgets/types';
 import { WidgetRuntime } from '../widgets/WidgetRuntime';
 import { instantiateTemplate, WIDGET_API_ENTRIES, WIDGET_TEMPLATES } from '../widgets/templates';
-
-const SAVED_APPS_KEY = 'nexus.saved-apps.v1';
-const NOTES_KEY = 'nexus.scratchpad.v1';
-
-interface SavedApp { id: string; title: string; url: string; mode: 'embed' | 'external' }
-const DEFAULT_LINKS: SavedApp[] = [
-  { id: 'github', title: 'GitHub', url: 'https://github.com', mode: 'external' },
-  { id: 'youtube', title: 'YouTube', url: 'https://www.youtube.com', mode: 'embed' },
-  { id: 'reddit', title: 'Reddit', url: 'https://www.reddit.com', mode: 'external' },
-];
-
-function normalizeHttpUrl(value: string): string | null {
-  const candidate = value.trim();
-  if (!candidate) return null;
-  const normalized = /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
-  try {
-    const parsed = new URL(normalized);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null;
-  } catch { return null; }
-}
-
-function readLinks(): SavedApp[] {
-  try {
-    const raw = localStorage.getItem(SAVED_APPS_KEY);
-    if (!raw) return DEFAULT_LINKS;
-    const saved = JSON.parse(raw);
-    return Array.isArray(saved) && saved.every(l =>
-      l && typeof l.id === 'string' && typeof l.title === 'string' &&
-      typeof l.url === 'string' && (l.mode === 'embed' || l.mode === 'external') &&
-      normalizeHttpUrl(l.url) !== null
-    ) ? saved as SavedApp[] : DEFAULT_LINKS;
-  } catch { return DEFAULT_LINKS; }
-}
+import {
+  extractHostname,
+  fromShortcutAppId,
+  isShortcutAppId,
+  normalizeHttpUrl,
+  readShortcuts,
+  saveShortcuts,
+  suggestTitleFromUrl,
+  toShortcutAppId,
+  type SavedShortcut,
+  type ShortcutLaunchMode,
+} from '../data/shortcuts';
+import { ShortcutFavicon } from '../components/ShortcutFavicon';
+import { BrowserApp } from './BrowserApp';
+import { ScratchpadApp } from './ScratchpadApp';
+import { NEXUS_VERSION } from '../data/version';
 
 /* ── SettingsProps — aligned with App.tsx ─────────────────────────────────── */
 export interface SettingsProps {
   theme: 'light' | 'dark';
   wallpaper: 'mist' | 'aurora' | 'dusk' | 'forest' | 'ocean' | 'ember' | 'lavender' | 'midnight' | 'rose' | 'mono' | 'citrus' | 'glacier';
   showSeconds: boolean;
+  showMessages: boolean;
+  restoreSession: boolean;
   arrangeMode: boolean;
   hasPassword: boolean;
   msgRefreshMins: number;
@@ -55,61 +40,205 @@ export interface SettingsProps {
   onToggleTheme: () => void;
   onWallpaperChange: (w: SettingsProps['wallpaper']) => void;
   onToggleSeconds: () => void;
+  onToggleMessages: () => void;
+  onToggleRestoreSession: () => void;
+  onResetMessages: () => void;
   onToggleArrange: () => void;
   onPassword: () => void;
+  onRemovePassword: () => void;
+  onExportWorkspace: () => void;
+  onImportWorkspace: (rawJson: string) => { ok: true; summary: string } | { ok: false; error: string };
+  onResetWorkspace: () => void;
   onMsgRefreshChange: (mins: number) => void;
   onMessagesChange: (msgs: DesktopMessage[]) => void;
   widgets: WidgetDefinition[];
   onWidgetsChange: (widgets: WidgetDefinition[]) => void;
   onPreviewWidget: (widget: WidgetDefinition) => void;
   onOpenApp?: (appId: AppId) => void;
+  shortcuts: SavedShortcut[];
+  onShortcutsChange: (shortcuts: SavedShortcut[]) => void;
+  onRemoveShortcut: (shortcutId: string) => void;
+  pinnedDesktop: AppId[];
+  pinnedDock: AppId[];
+  onTogglePin: (appId: AppId, dest: 'desktop' | 'dock') => void;
 }
 
 export function AppHost({ appId, settings }: { appId: AppId; settings?: SettingsProps }) {
+  if (isShortcutAppId(appId)) {
+    const shortcutId = fromShortcutAppId(appId);
+    const list = settings?.shortcuts ?? readShortcuts();
+    const shortcut = list.find(item => item.id === shortcutId);
+    if (!shortcut) {
+      return (
+        <div className="empty-state">
+          <Globe2 size={22} />
+          <strong>Shortcut removed</strong>
+          <span>This web shortcut is no longer in your Saved links collection.</span>
+        </div>
+      );
+    }
+    return (
+      <ShortcutWebApp
+        shortcut={shortcut}
+        onModeChange={mode => {
+          if (!settings) return;
+          settings.onShortcutsChange(
+            settings.shortcuts.map(item => (item.id === shortcut.id ? { ...item, mode } : item))
+          );
+        }}
+      />
+    );
+  }
+
   switch (appId) {
-    case 'browser': return <BrowserApp />;
+    case 'browser': return <BrowserApp settings={settings} />;
     case 'youtube': return <YouTubeApp />;
-    case 'notes': return <NotesApp />;
-    case 'bookmarks': return <BookmarksApp />;
+    case 'notes': return <ScratchpadApp />;
+    case 'bookmarks': return <BookmarksApp settings={settings} />;
     case 'settings': return settings ? <SettingsApp settings={settings} /> : <div className="empty-state"><span>Settings unavailable.</span></div>;
     case 'widgets': return settings ? <WidgetStudioApp settings={settings} /> : <div className="empty-state"><span>Widget Studio unavailable.</span></div>;
     default: return <div className="empty-state"><span>App not found.</span></div>;
   }
 }
 
-/* ── Browser ──────────────────────────────────────────────────────────────── */
-function BrowserApp() {
-  const [url, setUrl] = useState('https://example.com');
-  const [address, setAddress] = useState('https://example.com');
-  const [mode, setMode] = useState<'embed' | 'external'>('embed');
-  const [showFallback, setShowFallback] = useState(false);
-  const navigate = () => {
-    const n = normalizeHttpUrl(address); if (!n) return;
-    setUrl(n); setShowFallback(false);
-    if (mode === 'external') window.open(n, '_blank', 'noopener,noreferrer');
-  };
+/* ── Shortcut Web App Window ──────────────────────────────────────────────── */
+function ShortcutWebApp({
+  shortcut,
+  onModeChange,
+}: {
+  shortcut: SavedShortcut;
+  onModeChange: (mode: ShortcutLaunchMode) => void;
+}) {
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const [showBlockedHelp, setShowBlockedHelp] = useState(false);
+  const hostname = extractHostname(shortcut.url) || shortcut.url;
+
   return (
-    <div className="web-app">
-      <form className="address-bar" onSubmit={e => { e.preventDefault(); navigate(); }}>
-        <button type="button" className={`mode-pill ${mode === 'external' ? 'external' : ''}`} onClick={() => setMode(m => m === 'embed' ? 'external' : 'embed')}>
-          {mode === 'embed' ? 'Window' : 'Browser tab'}
-        </button>
-        <Search size={14} className="address-search-icon" />
-        <input className="address-input" value={address} onChange={e => setAddress(e.target.value)} aria-label="Website address" spellCheck={false} />
-        <button className="icon-btn" type="submit" aria-label="Go"><ArrowUpRight size={15} /></button>
-      </form>
-      {mode === 'external' ? (
-        <div className="empty-state"><ExternalLink size={22} /><strong>Open in your browser</strong><span>External mode opens sites in a real tab for full compatibility.</span><button className="primary-btn" onClick={navigate}>Open website</button></div>
-      ) : showFallback ? (
-        <div className="empty-state"><Globe2 size={22} /><strong>Site blocked embedding</strong><span>Some sites refuse to load inside another page.</span><button className="primary-btn" onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}>Open in browser <ExternalLink size={13} /></button></div>
+    <div className="web-app shortcut-web-app">
+      <div className="address-bar shortcut-app-bar">
+        <span className="swa-favicon-chip">
+          <ShortcutFavicon url={shortcut.url} title={shortcut.title} size={16} />
+        </span>
+        <div className="swa-url-meta" title={shortcut.url}>
+          <strong>{shortcut.title}</strong>
+          <span>{hostname}</span>
+        </div>
+
+        <div className="swa-bar-actions">
+          <div className="ws-seg" role="group" aria-label="Launch mode">
+            <button
+              type="button"
+              className={shortcut.mode === 'embed' ? 'is-active' : ''}
+              onClick={() => { setShowBlockedHelp(false); onModeChange('embed'); }}
+            >
+              Window
+            </button>
+            <button
+              type="button"
+              className={shortcut.mode === 'external' ? 'is-active' : ''}
+              onClick={() => onModeChange('external')}
+            >
+              Browser tab
+            </button>
+          </div>
+
+          {shortcut.mode === 'embed' && (
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => { setShowBlockedHelp(false); setReloadNonce(n => n + 1); }}
+              title="Reload page"
+              aria-label="Reload page"
+            >
+              <RefreshCw size={13} />
+            </button>
+          )}
+
+          <a
+            href={shortcut.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="secondary-btn swa-ext-link"
+          >
+            Open tab <ExternalLink size={12} />
+          </a>
+        </div>
+      </div>
+
+      {shortcut.mode === 'external' ? (
+        <div className="empty-state swa-launch-stage">
+          <div className="swa-hero-tile">
+            <ShortcutFavicon url={shortcut.url} title={shortcut.title} size={34} />
+          </div>
+          <strong>{shortcut.title}</strong>
+          <span>
+            Configured to open in a full browser tab ({hostname}) so sign-ins and cookies work without iframe restrictions.
+          </span>
+          <div className="swa-stage-actions">
+            <a
+              href={shortcut.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="primary-btn swa-ext-link"
+            >
+              Launch {shortcut.title} <ArrowUpRight size={13} />
+            </a>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={() => onModeChange('embed')}
+            >
+              Try in window
+            </button>
+          </div>
+        </div>
+      ) : showBlockedHelp ? (
+        <div className="empty-state swa-launch-stage">
+          <div className="swa-hero-tile">
+            <ShortcutFavicon url={shortcut.url} title={shortcut.title} size={34} />
+          </div>
+          <strong>Site restricts window embedding</strong>
+          <span>
+            Many sites block loading inside frames via security headers. Switch this shortcut to Browser tab mode or open it directly below.
+          </span>
+          <div className="swa-stage-actions">
+            <a
+              href={shortcut.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="primary-btn swa-ext-link"
+            >
+              Open in browser tab <ExternalLink size={13} />
+            </a>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={() => { onModeChange('external'); setShowBlockedHelp(false); }}
+            >
+              Save as Browser tab mode
+            </button>
+          </div>
+        </div>
       ) : (
-        <iframe className="web-frame" title="Website preview" src={url} sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox" referrerPolicy="strict-origin-when-cross-origin" />
+        <iframe
+          key={`${shortcut.url}-${reloadNonce}`}
+          className="web-frame"
+          title={shortcut.title}
+          src={shortcut.url}
+          sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+          referrerPolicy="strict-origin-when-cross-origin"
+        />
       )}
-      {mode === 'embed' && (
+
+      {shortcut.mode === 'embed' && !showBlockedHelp && (
         <div className="web-app-footer">
-          <span>Embedded sites may restrict features.</span>
-          <button onClick={() => setShowFallback(true)}>Can't see it?</button>
-          <button onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}><ExternalLink size={11} /> Open externally</button>
+          <span>Blank frame or refused connection?</span>
+          <button type="button" onClick={() => setShowBlockedHelp(true)}>
+            Site blocked embedding?
+          </button>
+          <a href={shortcut.url} target="_blank" rel="noopener noreferrer">
+            <ExternalLink size={11} /> Open externally
+          </a>
         </div>
       )}
     </div>
@@ -141,106 +270,826 @@ function YouTubeApp() {
       <div className="video-stage">
         <iframe title="YouTube player" src={`https://www.youtube-nocookie.com/embed/${video}`} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen />
       </div>
-      <div className="web-app-footer"><span>Official YouTube embedded player.</span><button onClick={() => window.open(`https://www.youtube.com/watch?v=${video}`, '_blank', 'noopener,noreferrer')}><ExternalLink size={11} /> Watch on YouTube</button></div>
+      <div className="web-app-footer"><span>Official YouTube embedded player.</span><a href={`https://www.youtube.com/watch?v=${video}`} target="_blank" rel="noopener noreferrer"><ExternalLink size={11} /> Watch on YouTube</a></div>
     </div>
   );
 }
 
-/* ── Notes ────────────────────────────────────────────────────────────────── */
-function NotesApp() {
-  const [note, setNote] = useState(() => { try { return localStorage.getItem(NOTES_KEY) ?? ''; } catch { return ''; } });
-  useEffect(() => { try { localStorage.setItem(NOTES_KEY, note); } catch { } }, [note]);
-  return (
-    <div className="notes-app">
-      <div className="notes-heading"><StickyNote size={14} strokeWidth={1.5} /><span>Scratchpad</span><span className="saved-indicator">Saved locally</span></div>
-      <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="A thought, a task, a suspiciously ambitious project idea…" aria-label="Scratchpad note" />
-    </div>
-  );
-}
 
-/* ── Bookmarks ────────────────────────────────────────────────────────────── */
-function BookmarksApp() {
-  const [links, setLinks] = useState<SavedApp[]>(readLinks);
-  const [title, setTitle] = useState(''); const [url, setUrl] = useState('');
-  const [mode, setMode] = useState<'embed' | 'external'>('external');
-  useEffect(() => { try { localStorage.setItem(SAVED_APPS_KEY, JSON.stringify(links)); window.dispatchEvent(new Event('nexus:saved-links-updated')); } catch { } }, [links]);
-  const addLink = (e: FormEvent) => {
-    e.preventDefault();
-    const n = normalizeHttpUrl(url); if (!n || !title.trim()) return;
-    setLinks(items => [...items, { id: crypto.randomUUID(), title: title.trim(), url: n, mode }]);
-    setTitle(''); setUrl('');
+
+/* ── Saved Links / Web Shortcuts Manager ──────────────────────────────────── */
+function BookmarksApp({ settings }: { settings?: SettingsProps }) {
+  const [fallbackLinks, setFallbackLinks] = useState<SavedShortcut[]>(readShortcuts);
+  const links = settings ? settings.shortcuts : fallbackLinks;
+
+  const updateLinks = (next: SavedShortcut[]) => {
+    if (settings) {
+      settings.onShortcutsChange(next);
+    } else {
+      setFallbackLinks(next);
+      saveShortcuts(next);
+    }
   };
+
+  const [composerOpen, setComposerOpen] = useState<boolean>(() => links.length === 0);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [url, setUrl] = useState('');
+  const [title, setTitle] = useState('');
+  const [titleTouched, setTitleTouched] = useState(false);
+  const [mode, setMode] = useState<ShortcutLaunchMode>('embed');
+  const [pinDockOnCreate, setPinDockOnCreate] = useState(false);
+  const [pinDesktopOnCreate, setPinDesktopOnCreate] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<'all' | 'pinned' | 'embed' | 'external'>('all');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  /* Debounced URL for live favicon preview while typing in composer */
+  const [previewUrl, setPreviewUrl] = useState('');
+  useEffect(() => {
+    const normalized = normalizeHttpUrl(url);
+    if (!normalized) {
+      setPreviewUrl('');
+      return;
+    }
+    const timer = window.setTimeout(() => setPreviewUrl(normalized), 260);
+    return () => window.clearTimeout(timer);
+  }, [url]);
+
+  const handleUrlChange = (nextUrl: string) => {
+    setUrl(nextUrl);
+    if (formError) setFormError('');
+    if (!titleTouched) {
+      const suggested = suggestTitleFromUrl(nextUrl);
+      if (suggested) setTitle(suggested);
+    }
+  };
+
+  const resetComposer = () => {
+    setEditingId(null);
+    setUrl('');
+    setTitle('');
+    setTitleTouched(false);
+    setMode('embed');
+    setPinDockOnCreate(false);
+    setPinDesktopOnCreate(false);
+    setFormError('');
+  };
+
+  const startEdit = (item: SavedShortcut) => {
+    setEditingId(item.id);
+    setUrl(item.url);
+    setTitle(item.title);
+    setTitleTouched(true);
+    setMode(item.mode);
+    setFormError('');
+    setComposerOpen(true);
+  };
+
+  const submitShortcut = (e: FormEvent) => {
+    e.preventDefault();
+    const normalized = normalizeHttpUrl(url);
+    if (!normalized) {
+      setFormError('Enter a valid website address (for example, linear.app or https://github.com).');
+      return;
+    }
+    const finalTitle = title.trim() || suggestTitleFromUrl(normalized) || extractHostname(normalized) || 'Shortcut';
+
+    if (editingId) {
+      updateLinks(
+        links.map(item =>
+          item.id === editingId ? { ...item, title: finalTitle, url: normalized, mode } : item
+        )
+      );
+      resetComposer();
+      setComposerOpen(false);
+      return;
+    }
+
+    const id = crypto.randomUUID();
+    const created: SavedShortcut = { id, title: finalTitle, url: normalized, mode };
+    updateLinks([created, ...links]);
+
+    if (settings) {
+      const appId = toShortcutAppId(id);
+      if (pinDockOnCreate && !settings.pinnedDock.includes(appId)) {
+        settings.onTogglePin(appId, 'dock');
+      }
+      if (pinDesktopOnCreate && !settings.pinnedDesktop.includes(appId)) {
+        settings.onTogglePin(appId, 'desktop');
+      }
+    }
+
+    resetComposer();
+    setComposerOpen(false);
+  };
+
+  const handleDelete = (id: string) => {
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      return;
+    }
+    if (settings) {
+      settings.onRemoveShortcut(id);
+    } else {
+      updateLinks(links.filter(item => item.id !== id));
+    }
+    if (editingId === id) resetComposer();
+    setConfirmDeleteId(null);
+  };
+
+  const isPinned = (id: string) => {
+    if (!settings) return false;
+    const appId = toShortcutAppId(id);
+    return settings.pinnedDock.includes(appId) || settings.pinnedDesktop.includes(appId);
+  };
+
+  const pinnedCount = useMemo(
+    () => links.filter(item => isPinned(item.id)).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [links, settings?.pinnedDock, settings?.pinnedDesktop]
+  );
+
+  const filteredLinks = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return links.filter(item => {
+      if (filter === 'pinned' && !isPinned(item.id)) return false;
+      if (filter === 'embed' && item.mode !== 'embed') return false;
+      if (filter === 'external' && item.mode !== 'external') return false;
+      if (!q) return true;
+      return `${item.title} ${item.url}`.toLowerCase().includes(q);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [links, query, filter, settings?.pinnedDock, settings?.pinnedDesktop]);
+
   return (
     <div className="bookmarks-app">
-      <div className="app-section-heading"><div><span className="eyebrow">Your Collection</span><h3>Saved destinations</h3></div><span className="count-label">{links.length} links</span></div>
-      <div className="saved-link-list">
-        {links.map(link => (
-          <div className="saved-link" key={link.id}>
-            <div className="link-monogram">{link.title.slice(0, 1).toUpperCase()}</div>
-            <div className="saved-link-copy"><strong>{link.title}</strong><span>{link.url}</span></div>
-            <button className="icon-btn" onClick={() => window.open(link.url, '_blank', 'noopener,noreferrer')} aria-label={`Open ${link.title}`}><ArrowUpRight size={14} /></button>
-            <button className="icon-btn" onClick={() => setLinks(items => items.filter(i => i.id !== link.id))} aria-label={`Remove ${link.title}`} style={{ fontSize: 16, fontWeight: 300 }}>×</button>
+      {/* Header */}
+      <header className="sl-header">
+        <div>
+          <span className="eyebrow">Web Shortcuts</span>
+          <h3>Saved links & apps</h3>
+          <p>Every shortcut appears in the App Menu and can be pinned to your Dock or Desktop.</p>
+        </div>
+        <button
+          type="button"
+          className={composerOpen ? 'secondary-btn' : 'primary-btn'}
+          onClick={() => {
+            if (composerOpen) {
+              resetComposer();
+              setComposerOpen(false);
+            } else {
+              setComposerOpen(true);
+            }
+          }}
+        >
+          {composerOpen ? <><X size={13} /> Close</> : <><Plus size={13} /> New shortcut</>}
+        </button>
+      </header>
+
+      {/* Collapsible Add / Edit Shortcut Composer */}
+      {composerOpen && (
+        <form className="sl-composer" onSubmit={submitShortcut}>
+          <div className="sl-composer-main">
+            <div className="sl-preview-box" title="Live favicon preview">
+              <ShortcutFavicon url={previewUrl} title={title} size={24} />
+            </div>
+
+            <div className="sl-composer-inputs">
+              <label className="sl-field">
+                <span>Website URL</span>
+                <input
+                  placeholder="https://linear.app or figma.com"
+                  value={url}
+                  onChange={e => handleUrlChange(e.target.value)}
+                  aria-label="Website URL"
+                  autoFocus
+                  spellCheck={false}
+                />
+              </label>
+
+              <label className="sl-field">
+                <span>App name</span>
+                <input
+                  placeholder="Auto-filled from domain"
+                  value={title}
+                  onChange={e => {
+                    setTitle(e.target.value);
+                    setTitleTouched(e.target.value.trim().length > 0);
+                  }}
+                  aria-label="Shortcut name"
+                />
+              </label>
+            </div>
           </div>
-        ))}
+
+          {formError && <p className="sl-form-error" role="alert">{formError}</p>}
+
+          <div className="sl-composer-footer">
+            <div className="sl-composer-opts">
+              <div className="ws-seg" role="group" aria-label="Default opening mode">
+                <button
+                  type="button"
+                  className={mode === 'embed' ? 'is-active' : ''}
+                  onClick={() => setMode('embed')}
+                >
+                  Workspace window
+                </button>
+                <button
+                  type="button"
+                  className={mode === 'external' ? 'is-active' : ''}
+                  onClick={() => setMode('external')}
+                >
+                  Browser tab
+                </button>
+              </div>
+
+              {!editingId && settings && (
+                <div className="sl-pin-checks">
+                  <button
+                    type="button"
+                    className={`sl-check-btn ${pinDockOnCreate ? 'is-checked' : ''}`}
+                    onClick={() => setPinDockOnCreate(v => !v)}
+                    aria-pressed={pinDockOnCreate}
+                  >
+                    {pinDockOnCreate ? <Check size={11} /> : <Pin size={11} />}
+                    Pin to dock
+                  </button>
+                  <button
+                    type="button"
+                    className={`sl-check-btn ${pinDesktopOnCreate ? 'is-checked' : ''}`}
+                    onClick={() => setPinDesktopOnCreate(v => !v)}
+                    aria-pressed={pinDesktopOnCreate}
+                  >
+                    {pinDesktopOnCreate ? <Check size={11} /> : <Monitor size={11} />}
+                    Pin to desktop
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="sl-composer-btns">
+              {editingId && (
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => { resetComposer(); setComposerOpen(false); }}
+                >
+                  Cancel
+                </button>
+              )}
+              <button type="submit" className="primary-btn">
+                {editingId ? <><Check size={13} /> Save changes</> : <><Plus size={13} /> Add app shortcut</>}
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
+
+      {/* Search & Interactive Filter Bar */}
+      <div className="sl-toolbar">
+        <label className="sl-search">
+          <Search size={13} />
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search shortcuts by name or domain…"
+            aria-label="Search shortcuts"
+          />
+          {query && (
+            <button type="button" className="sl-search-clear" onClick={() => setQuery('')} aria-label="Clear search">
+              <X size={11} />
+            </button>
+          )}
+        </label>
+
+        <div className="ws-seg sl-filters" role="group" aria-label="Filter shortcuts">
+          <button type="button" className={filter === 'all' ? 'is-active' : ''} onClick={() => setFilter('all')}>
+            All · {links.length}
+          </button>
+          <button type="button" className={filter === 'pinned' ? 'is-active' : ''} onClick={() => setFilter('pinned')}>
+            Pinned · {pinnedCount}
+          </button>
+          <button type="button" className={filter === 'embed' ? 'is-active' : ''} onClick={() => setFilter('embed')}>
+            Window
+          </button>
+          <button type="button" className={filter === 'external' ? 'is-active' : ''} onClick={() => setFilter('external')}>
+            Tab
+          </button>
+        </div>
       </div>
-      <form className="add-link-form" onSubmit={addLink}>
-        <input placeholder="Name" value={title} onChange={e => setTitle(e.target.value)} aria-label="Bookmark name" required />
-        <input placeholder="https://example.com" value={url} onChange={e => setUrl(e.target.value)} aria-label="Bookmark URL" required />
-        <select value={mode} onChange={e => setMode(e.target.value as 'embed' | 'external')} aria-label="Opening mode">
-          <option value="external">External tab</option>
-          <option value="embed">Try embed</option>
-        </select>
-        <button className="primary-btn" type="submit"><Plus size={13} /> Add</button>
-      </form>
+
+      {/* Shortcuts List */}
+      <div className="saved-link-list">
+        {filteredLinks.length === 0 ? (
+          <div className="sl-empty">
+            <strong>{links.length === 0 ? 'No shortcuts yet' : 'No matching shortcuts'}</strong>
+            <span>
+              {links.length === 0
+                ? 'Add any website to launch it from your App Menu, Dock, or Desktop with its site icon.'
+                : 'Try clearing your search query or switching filters.'}
+            </span>
+            {links.length === 0 && !composerOpen && (
+              <button type="button" className="primary-btn" onClick={() => setComposerOpen(true)}>
+                <Plus size={13} /> Add your first shortcut
+              </button>
+            )}
+          </div>
+        ) : (
+          filteredLinks.map(link => {
+            const appId = toShortcutAppId(link.id);
+            const onDock = settings ? settings.pinnedDock.includes(appId) : false;
+            const onDesktop = settings ? settings.pinnedDesktop.includes(appId) : false;
+            const host = extractHostname(link.url) || link.url;
+            const pinSummary =
+              onDock && onDesktop
+                ? 'Pinned to dock & desktop'
+                : onDock
+                  ? 'Pinned to dock'
+                  : onDesktop
+                    ? 'Pinned to desktop'
+                    : null;
+
+            return (
+              <div className="saved-link" key={link.id}>
+                <button
+                  type="button"
+                  className="sl-icon-tile"
+                  onClick={() => settings?.onOpenApp?.(appId)}
+                  title={`Launch ${link.title}`}
+                >
+                  <ShortcutFavicon url={link.url} title={link.title} size={22} />
+                </button>
+
+                <div className="saved-link-copy">
+                  <strong>{link.title}</strong>
+                  <div className="sl-meta">
+                    <span>{host}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{link.mode === 'embed' ? 'Workspace window' : 'Browser tab'}</span>
+                    {pinSummary && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="sl-meta-pin">{pinSummary}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div className="sl-actions">
+                  {settings?.onOpenApp && (
+                    <button
+                      type="button"
+                      className="secondary-btn sl-launch-btn"
+                      onClick={() => settings.onOpenApp?.(appId)}
+                    >
+                      Launch
+                    </button>
+                  )}
+
+                  <a
+                    href={link.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="icon-btn"
+                    title="Open in new browser tab"
+                    aria-label={`Open ${link.title} in browser tab`}
+                  >
+                    <ExternalLink size={13} />
+                  </a>
+
+                  {settings && (
+                    <>
+                      <button
+                        type="button"
+                        className={`icon-btn ${onDock ? 'is-pinned' : ''}`}
+                        onClick={() => settings.onTogglePin(appId, 'dock')}
+                        title={onDock ? 'Remove from dock' : 'Pin to dock'}
+                        aria-label={onDock ? `Unpin ${link.title} from dock` : `Pin ${link.title} to dock`}
+                        aria-pressed={onDock}
+                      >
+                        <Pin size={13} />
+                      </button>
+
+                      <button
+                        type="button"
+                        className={`icon-btn ${onDesktop ? 'is-pinned' : ''}`}
+                        onClick={() => settings.onTogglePin(appId, 'desktop')}
+                        title={onDesktop ? 'Remove from desktop' : 'Pin to desktop'}
+                        aria-label={onDesktop ? `Remove ${link.title} from desktop` : `Pin ${link.title} to desktop`}
+                        aria-pressed={onDesktop}
+                      >
+                        <Monitor size={13} />
+                      </button>
+                    </>
+                  )}
+
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => startEdit(link)}
+                    title="Edit shortcut"
+                    aria-label={`Edit ${link.title}`}
+                  >
+                    <Pencil size={13} />
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`settings-action danger sl-del-btn ${confirmDeleteId === link.id ? 'is-confirming' : ''}`}
+                    onClick={() => handleDelete(link.id)}
+                    aria-label={`Delete ${link.title}`}
+                    title="Remove shortcut"
+                  >
+                    {confirmDeleteId === link.id ? 'Confirm?' : <Trash2 size={13} />}
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
 
 /* ── Settings ─────────────────────────────────────────────────────────────── */
 function SettingsApp({ settings }: { settings: SettingsProps }) {
-  const [section, setSection] = useState<'appearance' | 'desktop' | 'messages' | 'privacy'>('appearance');
+  const [section, setSection] = useState<'appearance' | 'desktop' | 'messages' | 'privacy' | 'backup'>('appearance');
+  const [backupNotice, setBackupNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+  const [confirmFactoryReset, setConfirmFactoryReset] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+
   const nav = [
-    { id: 'appearance' as const, label: 'Appearance', icon: '◐', detail: 'Theme and wallpaper' },
-    { id: 'desktop' as const, label: 'Desktop', icon: '▦', detail: 'Workspace behavior' },
-    { id: 'messages' as const, label: 'Desktop messages', icon: '✳', detail: 'Rotating notes' },
-    { id: 'privacy' as const, label: 'Privacy', icon: '◇', detail: 'Local protection' },
+    { id: 'appearance' as const, label: 'Appearance', Icon: Palette, detail: 'Theme and wallpaper' },
+    { id: 'desktop' as const, label: 'Desktop', Icon: Monitor, detail: 'Canvas and clock' },
+    { id: 'messages' as const, label: 'Desktop messages', Icon: MessageSquareQuote, detail: 'Ambient notes' },
+    { id: 'privacy' as const, label: 'Privacy', Icon: Shield, detail: 'Passcode protection' },
+    { id: 'backup' as const, label: 'Backup & reset', Icon: HardDriveDownload, detail: 'Export and recovery' },
   ];
   const current = nav.find(item => item.id === section)!;
+
+  const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const rawText = await file.text();
+      const result = settings.onImportWorkspace(rawText);
+      if (result.ok) {
+        setBackupNotice({ kind: 'success', text: result.summary });
+      } else {
+        setBackupNotice({ kind: 'error', text: result.error });
+      }
+    } catch {
+      setBackupNotice({ kind: 'error', text: 'Could not read the selected backup file.' });
+    }
+  };
+
   return (
     <div className="settings-shell">
       <aside className="settings-sidebar">
-        <div className="settings-sidebar-brand"><span className="settings-brand-mark">N</span><div><strong>Settings</strong><span>Customize Nexus</span></div></div>
+        <div className="settings-sidebar-brand">
+          <span className="settings-brand-mark">N</span>
+          <div>
+            <strong>Settings</strong>
+            <span>Customize Nexus</span>
+          </div>
+        </div>
         <div className="settings-nav-label">PREFERENCES</div>
         <nav className="settings-nav" aria-label="Settings sections">
-          {nav.map(item => <button key={item.id} className={`settings-nav-item ${section === item.id ? 'is-active' : ''}`} onClick={() => setSection(item.id)} aria-current={section === item.id ? 'page' : undefined}><span className="settings-nav-icon">{item.icon}</span><span className="settings-nav-copy"><strong>{item.label}</strong><small>{item.detail}</small></span>{section === item.id && <span className="settings-nav-indicator" />}</button>)}
+          {nav.map(item => {
+            const Icon = item.Icon;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={`settings-nav-item ${section === item.id ? 'is-active' : ''}`}
+                onClick={() => { setSection(item.id); setBackupNotice(null); setConfirmFactoryReset(false); }}
+                aria-current={section === item.id ? 'page' : undefined}
+              >
+                <span className="settings-nav-icon"><Icon size={14} strokeWidth={1.65} /></span>
+                <span className="settings-nav-copy">
+                  <strong>{item.label}</strong>
+                  <small>{item.detail}</small>
+                </span>
+                {section === item.id && <span className="settings-nav-indicator" />}
+              </button>
+            );
+          })}
         </nav>
-        <div className="settings-sidebar-footer"><span className="settings-sidebar-dot" /> Local workspace</div>
+        <div className="settings-sidebar-footer">Local-first workspace</div>
       </aside>
+
       <main className="settings-content">
-        <header className="settings-page-header"><div><span className="eyebrow">NEXUS PREFERENCES</span><h3>{current.label}</h3><p>{current.detail}. Make your workspace feel right.</p></div><span className="settings-page-index">0{nav.findIndex(item => item.id === section) + 1} <i>/ 04</i></span></header>
-        {section === 'appearance' && <section className="settings-group settings-panel"><div className="settings-group-heading"><strong>Appearance</strong><span>Canvas and presentation</span></div>
-          <div className="settings-row"><div><strong>Color theme</strong><span>{settings.theme === 'dark' ? 'Dark — warm charcoal' : 'Light — soft paper'}</span></div><button className="settings-action" onClick={settings.onToggleTheme}>{settings.theme === 'dark' ? 'Use light theme' : 'Use dark theme'}</button></div>
-          <div className="settings-row"><div><strong>Desktop wallpaper</strong><span>Choose the atmosphere behind your workspace</span></div><select value={settings.wallpaper} onChange={e => settings.onWallpaperChange(e.target.value as SettingsProps['wallpaper'])} aria-label="Wallpaper"><option value="mist">Soft mist</option><option value="aurora">Aurora</option><option value="dusk">Warm dusk</option><option value="forest">Forest</option><option value="ocean">Ocean glass</option><option value="ember">Ember</option><option value="lavender">Lavender haze</option><option value="midnight">Midnight</option><option value="rose">Rosewater</option><option value="mono">Monochrome</option><option value="citrus">Citrus</option><option value="glacier">Glacier</option></select></div>
-        </section>}
-        {section === 'desktop' && <section className="settings-group settings-panel"><div className="settings-group-heading"><strong>Desktop behavior</strong><span>Control how the workspace feels</span></div>
-          <div className="settings-row"><div><strong>Arrange mode</strong><span>Move desktop icons to your preferred positions</span></div><button className="settings-action" onClick={settings.onToggleArrange}>{settings.arrangeMode ? 'Finish arranging' : 'Arrange icons'}</button></div>
-          <div className="settings-row"><div><strong>Clock seconds</strong><span>Show seconds in the desktop clock</span></div><button className={`settings-switch ${settings.showSeconds ? 'is-on' : ''}`} onClick={settings.onToggleSeconds} aria-label="Toggle seconds" aria-pressed={settings.showSeconds}><span /></button></div>
-        </section>}
-        {section === 'messages' && <section className="settings-group settings-panel"><div className="settings-group-heading"><strong>Desktop messages</strong><span>Small notes, dev jokes, and reminders that rotate on your desktop</span></div>
-          <div className="settings-row"><div><strong>Refresh interval</strong><span>How often the message changes</span></div><select value={settings.msgRefreshMins} onChange={e => settings.onMsgRefreshChange(Number(e.target.value))} aria-label="Message refresh interval"><option value={1}>Every minute</option><option value={2}>Every 2 minutes</option><option value={5}>Every 5 minutes</option><option value={10}>Every 10 minutes</option><option value={15}>Every 15 minutes</option><option value={30}>Every 30 minutes</option><option value={60}>Every hour</option></select></div>
-          <MessagesEditor messages={settings.messages} onChange={settings.onMessagesChange} />
-        </section>}
-        {section === 'privacy' && <section className="settings-group settings-panel"><div className="settings-group-heading"><strong>Privacy and security</strong><span>Local protection and data handling</span></div>
-          <div className="settings-row"><div><strong>Workspace passcode</strong><span>{settings.hasPassword ? 'Lock screen enabled' : 'No passcode set'}</span></div><button className="settings-action" onClick={settings.onPassword}>{settings.hasPassword ? 'Change passcode' : 'Set up passcode'}</button></div>
-          <div className="settings-row"><div><strong>Storage</strong><span>Your workspace data stays in this browser</span></div><span className="status-dot-label"><i />Local only</span></div>
-        </section>}
-        <div className="settings-content-footer"><span>Changes save automatically</span><span>NEXUS · 0.7.0</span></div>
+        <header className="settings-page-header">
+          <div>
+            <span className="eyebrow">NEXUS PREFERENCES</span>
+            <h3>{current.label}</h3>
+            <p>{current.detail}. Make your workspace feel right.</p>
+          </div>
+          <span className="settings-page-index">
+            0{nav.findIndex(item => item.id === section) + 1} <i>/ 0{nav.length}</i>
+          </span>
+        </header>
+
+        {section === 'appearance' && (
+          <section className="settings-group settings-panel">
+            <div className="settings-group-heading">
+              <strong>Appearance</strong>
+              <span>Canvas and presentation</span>
+            </div>
+            <div className="settings-row">
+              <div>
+                <strong>Color theme</strong>
+                <span>{settings.theme === 'dark' ? 'Dark — warm charcoal' : 'Light — soft paper'}</span>
+              </div>
+              <button type="button" className="settings-action" onClick={settings.onToggleTheme}>
+                {settings.theme === 'dark' ? 'Use light theme' : 'Use dark theme'}
+              </button>
+            </div>
+            <div className="settings-row">
+              <div>
+                <strong>Desktop wallpaper</strong>
+                <span>Choose the atmosphere behind your workspace</span>
+              </div>
+              <select
+                value={settings.wallpaper}
+                onChange={e => settings.onWallpaperChange(e.target.value as SettingsProps['wallpaper'])}
+                aria-label="Wallpaper"
+              >
+                <option value="mist">Soft mist</option>
+                <option value="aurora">Aurora</option>
+                <option value="dusk">Warm dusk</option>
+                <option value="forest">Forest</option>
+                <option value="ocean">Ocean glass</option>
+                <option value="ember">Ember</option>
+                <option value="lavender">Lavender haze</option>
+                <option value="midnight">Midnight</option>
+                <option value="rose">Rosewater</option>
+                <option value="mono">Monochrome</option>
+                <option value="citrus">Citrus</option>
+                <option value="glacier">Glacier</option>
+              </select>
+            </div>
+          </section>
+        )}
+
+        {section === 'desktop' && (
+          <section className="settings-group settings-panel">
+            <div className="settings-group-heading">
+              <strong>Desktop behavior</strong>
+              <span>Control how objects behave on the canvas</span>
+            </div>
+            <div className="settings-row">
+              <div>
+                <strong>Arrange mode</strong>
+                <span>Drag desktop icons and reposition or resize desktop widgets (F2)</span>
+              </div>
+              <button type="button" className="settings-action" onClick={settings.onToggleArrange}>
+                {settings.arrangeMode ? 'Finish arranging' : 'Arrange desktop'}
+              </button>
+            </div>
+            <div className="settings-row">
+              <div>
+                <strong>Restore open windows on startup</strong>
+                <span>Reopen your active windows, split-screen tiles, and positions when opening a new tab</span>
+              </div>
+              <button
+                type="button"
+                className={`settings-switch ${settings.restoreSession ? 'is-on' : ''}`}
+                onClick={settings.onToggleRestoreSession}
+                aria-label="Toggle restore open windows on startup"
+                aria-pressed={settings.restoreSession}
+              >
+                <span />
+              </button>
+            </div>
+            <div className="settings-row">
+              <div>
+                <strong>Window snapping &amp; split tiling</strong>
+                <span>Drag any title bar to the left, right, or top screen edge, or use keyboard shortcuts</span>
+              </div>
+              <span className="settings-meta-note">Alt + [ · Alt + ] · Alt + ↑</span>
+            </div>
+            <div className="settings-row">
+              <div>
+                <strong>Clock seconds</strong>
+                <span>Show seconds in the bottom-right desktop clock</span>
+              </div>
+              <button
+                type="button"
+                className={`settings-switch ${settings.showSeconds ? 'is-on' : ''}`}
+                onClick={settings.onToggleSeconds}
+                aria-label="Toggle seconds"
+                aria-pressed={settings.showSeconds}
+              >
+                <span />
+              </button>
+            </div>
+          </section>
+        )}
+
+        {section === 'messages' && (
+          <section className="settings-group settings-panel">
+            <div className="settings-group-heading">
+              <strong>Desktop messages</strong>
+              <span>Small notes, dev jokes, and reminders that rotate quietly on your desktop</span>
+            </div>
+            <div className="settings-row">
+              <div>
+                <strong>Show desktop messages</strong>
+                <span>Display an ambient rotating note in the bottom-left corner</span>
+              </div>
+              <button
+                type="button"
+                className={`settings-switch ${settings.showMessages ? 'is-on' : ''}`}
+                onClick={settings.onToggleMessages}
+                aria-label="Toggle desktop messages"
+                aria-pressed={settings.showMessages}
+              >
+                <span />
+              </button>
+            </div>
+            <div className="settings-row">
+              <div>
+                <strong>Refresh interval</strong>
+                <span>How often the desktop message rotates</span>
+              </div>
+              <select
+                value={settings.msgRefreshMins}
+                onChange={e => settings.onMsgRefreshChange(Number(e.target.value))}
+                aria-label="Message refresh interval"
+                disabled={!settings.showMessages}
+              >
+                <option value={1}>Every minute</option>
+                <option value={2}>Every 2 minutes</option>
+                <option value={5}>Every 5 minutes</option>
+                <option value={10}>Every 10 minutes</option>
+                <option value={15}>Every 15 minutes</option>
+                <option value={30}>Every 30 minutes</option>
+                <option value={60}>Every hour</option>
+              </select>
+            </div>
+            <MessagesEditor
+              messages={settings.messages}
+              onChange={settings.onMessagesChange}
+              onResetDefaults={settings.onResetMessages}
+              disabled={!settings.showMessages}
+            />
+          </section>
+        )}
+
+        {section === 'privacy' && (
+          <section className="settings-group settings-panel">
+            <div className="settings-group-heading">
+              <strong>Privacy and local lock</strong>
+              <span>Local privacy protection and transparent browser threat model</span>
+            </div>
+            <div className="settings-row">
+              <div>
+                <strong>Workspace passcode</strong>
+                <span>{settings.hasPassword ? 'Lock screen active on new browser sessions' : 'Disabled — opens directly to desktop'}</span>
+              </div>
+              <div className="settings-row-actions">
+                <button type="button" className="settings-action" onClick={settings.onPassword}>
+                  {settings.hasPassword ? 'Change passcode' : 'Set up passcode'}
+                </button>
+                {settings.hasPassword && (
+                  <button type="button" className="settings-action danger" onClick={settings.onRemovePassword}>
+                    Remove passcode
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="settings-row">
+              <div>
+                <strong>Local threat model</strong>
+                <span>
+                  Passcodes are derived locally with PBKDF2-SHA256 (never stored in plaintext) as a privacy barrier on shared screens. Anyone with access to your OS account or browser developer tools can clear local profile storage.
+                </span>
+              </div>
+              <span className="settings-meta-note">PBKDF2 · Local</span>
+            </div>
+          </section>
+        )}
+
+        {section === 'backup' && (
+          <section className="settings-group settings-panel">
+            <div className="settings-group-heading">
+              <strong>Workspace backup &amp; recovery</strong>
+              <span>Export or restore your local preferences, pins, notes, shortcuts, and widgets</span>
+            </div>
+
+            {backupNotice && (
+              <div className={`settings-inline-banner ${backupNotice.kind === 'error' ? 'is-error' : 'is-success'}`} role="status">
+                <span>{backupNotice.text}</span>
+                <button type="button" onClick={() => setBackupNotice(null)} aria-label="Dismiss notice">
+                  <X size={12} />
+                </button>
+              </div>
+            )}
+
+            <div className="settings-row">
+              <div>
+                <strong>Export workspace JSON</strong>
+                <span>Download a versioned snapshot of your layout, shortcuts, notes, bookmarks, and widgets (passcodes are excluded)</span>
+              </div>
+              <button
+                type="button"
+                className="settings-action"
+                onClick={() => {
+                  settings.onExportWorkspace();
+                  setBackupNotice({ kind: 'success', text: 'Workspace backup downloaded.' });
+                }}
+              >
+                <Download size={12} /> Export JSON
+              </button>
+            </div>
+
+            <div className="settings-row">
+              <div>
+                <strong>Import workspace JSON</strong>
+                <span>Validate and restore a previously exported Nexus backup file</span>
+              </div>
+              <div>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  className="sr-only-input"
+                  onChange={handleImportFile}
+                />
+                <button
+                  type="button"
+                  className="settings-action"
+                  onClick={() => importInputRef.current?.click()}
+                >
+                  <Upload size={12} /> Import JSON…
+                </button>
+              </div>
+            </div>
+
+            <div className="settings-row">
+              <div>
+                <strong>Reset workspace to defaults</strong>
+                <span>Clear all saved pins, custom shortcuts, widgets, notes, and local passcode to return to a clean install</span>
+              </div>
+              {confirmFactoryReset ? (
+                <div className="settings-row-actions">
+                  <button
+                    type="button"
+                    className="settings-action"
+                    onClick={() => setConfirmFactoryReset(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-action danger"
+                    onClick={() => {
+                      settings.onResetWorkspace();
+                      setConfirmFactoryReset(false);
+                      setBackupNotice({ kind: 'success', text: 'Workspace reset to clean defaults.' });
+                    }}
+                  >
+                    Confirm full reset
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="settings-action danger"
+                  onClick={() => setConfirmFactoryReset(true)}
+                >
+                  <RotateCcw size={12} /> Reset workspace
+                </button>
+              )}
+            </div>
+          </section>
+        )}
+
+        <div className="settings-content-footer">
+          <span>Changes save automatically</span>
+          <span>NEXUS · {NEXUS_VERSION}</span>
+        </div>
       </main>
     </div>
   );
 }
 
-function MessagesEditor({ messages, onChange }: { messages: DesktopMessage[]; onChange: (messages: DesktopMessage[]) => void }) {
+function MessagesEditor({
+  messages,
+  onChange,
+  onResetDefaults,
+  disabled,
+}: {
+  messages: DesktopMessage[];
+  onChange: (messages: DesktopMessage[]) => void;
+  onResetDefaults: () => void;
+  disabled?: boolean;
+}) {
   const updateMessage = (id: string, text: string) => {
     onChange(messages.map(message => message.id === id ? { ...message, text } : message));
   };
@@ -255,23 +1104,40 @@ function MessagesEditor({ messages, onChange }: { messages: DesktopMessage[]; on
   };
 
   return (
-    <div className="messages-editor">
-      {messages.map(message => (
-        <div className="messages-editor-row" key={message.id}>
-          <input
-            value={message.text}
-            onChange={event => updateMessage(message.id, event.target.value)}
-            aria-label="Desktop message"
-            placeholder="Write a desktop message"
-          />
-          <button type="button" className="icon-btn" onClick={() => removeMessage(message.id)} disabled={messages.length <= 1} aria-label="Remove message">
-            <Trash2 size={14} />
+    <div className={`messages-editor ${disabled ? 'is-disabled' : ''}`}>
+      <div className="messages-editor-toolbar">
+        <span className="count-label">{messages.length} rotating notes</span>
+        <div className="settings-row-actions">
+          <button type="button" className="secondary-btn" onClick={onResetDefaults} disabled={disabled}>
+            <RotateCcw size={12} /> Restore defaults
+          </button>
+          <button type="button" className="secondary-btn" onClick={addMessage} disabled={disabled}>
+            <Plus size={13} /> Add message
           </button>
         </div>
-      ))}
-      <button type="button" className="secondary-btn" onClick={addMessage}>
-        <Plus size={13} /> Add message
-      </button>
+      </div>
+      <div className="messages-editor-list">
+        {messages.map(message => (
+          <div className="messages-editor-row" key={message.id}>
+            <input
+              value={message.text}
+              onChange={event => updateMessage(message.id, event.target.value)}
+              aria-label="Desktop message"
+              placeholder="Write a desktop message"
+              disabled={disabled}
+            />
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => removeMessage(message.id)}
+              disabled={disabled || messages.length <= 1}
+              aria-label="Remove message"
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -284,7 +1150,7 @@ const SOURCE_FILES: { key: keyof WidgetSource; label: string; hint: string }[] =
   { key: 'json', label: 'widget.json', hint: 'Config' },
 ];
 
-const VALID_APP_IDS: AppId[] = ['browser', 'youtube', 'notes', 'bookmarks', 'settings', 'widgets'];
+const VALID_CORE_APP_IDS: CoreAppId[] = ['browser', 'youtube', 'notes', 'bookmarks', 'settings', 'widgets'];
 
 function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
   const [tab, setTab] = useState<'workbench' | 'library' | 'api'>(() =>
@@ -700,7 +1566,10 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
                           widget={debouncedWidget}
                           theme={effectivePreviewTheme}
                           onOpenApp={appId => {
-                            if (settings.onOpenApp && VALID_APP_IDS.includes(appId as AppId)) {
+                            if (
+                              settings.onOpenApp &&
+                              (VALID_CORE_APP_IDS.includes(appId as CoreAppId) || isShortcutAppId(appId))
+                            ) {
                               settings.onOpenApp(appId as AppId);
                             }
                           }}

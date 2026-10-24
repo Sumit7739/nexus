@@ -1,5 +1,8 @@
 {
   "name": "Nexus — New Tab Workspace",
   "description": "Nexus — your personal desktop for the web.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
