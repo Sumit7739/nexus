@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -9,9 +10,15 @@ import {
 } from 'react';
 import {
   Bookmark,
+  CheckSquare,
+  Columns2,
+  Compass,
   LayoutGrid, Search, X, ChevronRight,
   Lock, Shield, Check, Plus, Pin,
+  Minimize2,
   MoreHorizontal, List, Grid2X2, Layers,
+  Settings as SettingsIcon,
+  StickyNote,
   Sun, Moon, LogOut, RefreshCw, ChevronLeft, ChevronRight as ChevronR,
   History, Sparkles, CheckCircle2, Wrench, MinusCircle, Image, ExternalLink,
   Move, EyeOff, Code2,
@@ -83,6 +90,12 @@ import {
 } from './data/notes';
 import { SpotlightPalette } from './components/SpotlightPalette';
 import type { SpotlightCommandPayload } from './spotlight/spotlight-engine';
+import { NEXUS_OPEN_APP_EVENT, type OpenAppEventDetail } from './data/context-actions';
+import {
+  clampMenuPosition,
+  computeLauncherMenuPlacement,
+  tileTopTwoWindows,
+} from './desktop/menu-layout';
 
 /* ─── Constants ───────────────────────────────────────────────────────────── */
 const SETTINGS_KEY       = 'nexus.settings.v1';
@@ -485,27 +498,201 @@ function PasswordSetup({ existingRecord, initialIntent, onSave, onRemove, onCanc
    DESKTOP CONTEXT MENU
    ════════════════════════════════════════════════════════════════════════════ */
 interface CtxProps {
-  x: number; y: number; onClose: () => void;
+  x: number;
+  y: number;
+  onClose: () => void;
+  onCreateNote: () => void;
+  onCreateChecklist: () => void;
+  onOpenNewBrowserTab: () => void;
+  onOpenBookmarks: () => void;
   onOpenSpotlight: () => void;
-  onOpenLauncher: () => void; onToggleArrange: () => void; arrangeMode: boolean;
-  wallpaper: Wallpaper; onWallpaperChange: (wallpaper: Wallpaper) => void;
+  onOpenLauncher: () => void;
+  visibleWindowCount: number;
+  minimizedWindowCount: number;
+  onTileWindows: () => void;
+  onMinimizeAllWindows: () => void;
+  onRestoreWindows: () => void;
+  onToggleArrange: () => void;
+  arrangeMode: boolean;
+  onOpenWidgets: () => void;
+  theme: Theme;
+  onToggleTheme: () => void;
+  canRotateQuote: boolean;
+  onNextQuote: () => void;
+  wallpaper: Wallpaper;
+  onWallpaperChange: (wallpaper: Wallpaper) => void;
+  onOpenSettings: () => void;
+  hasPassword: boolean;
+  onLock: () => void;
 }
-function DesktopCtxMenu({ x, y, onClose, onOpenSpotlight, onOpenLauncher, onToggleArrange, arrangeMode, wallpaper, onWallpaperChange }: CtxProps) {
+function DesktopCtxMenu({
+  x,
+  y,
+  onClose,
+  onCreateNote,
+  onCreateChecklist,
+  onOpenNewBrowserTab,
+  onOpenBookmarks,
+  onOpenSpotlight,
+  onOpenLauncher,
+  visibleWindowCount,
+  minimizedWindowCount,
+  onTileWindows,
+  onMinimizeAllWindows,
+  onRestoreWindows,
+  onToggleArrange,
+  arrangeMode,
+  onOpenWidgets,
+  theme,
+  onToggleTheme,
+  canRotateQuote,
+  onNextQuote,
+  wallpaper,
+  onWallpaperChange,
+  onOpenSettings,
+  hasPassword,
+  onLock,
+}: CtxProps) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState(() =>
+    clampMenuPosition(x, y, 248, 420, window.innerWidth, window.innerHeight, 12)
+  );
+
+  useLayoutEffect(() => {
+    const updatePosition = () => {
+      const el = menuRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      setCoords(
+        clampMenuPosition(x, y, rect.width, rect.height, window.innerWidth, window.innerHeight, 12)
+      );
+    };
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    return () => window.removeEventListener('resize', updatePosition);
+  }, [x, y, visibleWindowCount, minimizedWindowCount, canRotateQuote, hasPassword]);
+
+  const currentWallpaperName = WALLPAPERS.find((w) => w.id === wallpaper)?.name ?? 'Soft mist';
+
   return (
     <>
-      <div className="ctx-scrim" onClick={onClose} />
-      <div className="ctx-menu" style={{ left: x, top: y }} role="menu">
-        <button onClick={() => { onOpenSpotlight(); onClose(); }}>
+      <div className="ctx-scrim" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} />
+      <div
+        ref={menuRef}
+        className="ctx-menu desktop-ctx-menu"
+        style={{ left: coords.x, top: coords.y }}
+        role="menu"
+        aria-label="Desktop actions"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button type="button" role="menuitem" onClick={() => { onCreateNote(); onClose(); }}>
+          <StickyNote size={13} />
+          <span>New note</span>
+        </button>
+        <button type="button" role="menuitem" onClick={() => { onCreateChecklist(); onClose(); }}>
+          <CheckSquare size={13} />
+          <span>New checklist</span>
+        </button>
+        <button type="button" role="menuitem" onClick={() => { onOpenNewBrowserTab(); onClose(); }}>
+          <Compass size={13} />
+          <span>New browser tab</span>
+        </button>
+        <button type="button" role="menuitem" onClick={() => { onOpenBookmarks(); onClose(); }}>
+          <Bookmark size={13} />
+          <span>Add web shortcut</span>
+        </button>
+
+        <div className="ctx-sep" role="separator" />
+
+        <button type="button" role="menuitem" onClick={() => { onOpenSpotlight(); onClose(); }}>
           <Search size={13} />
           <span>Command palette</span>
           <kbd className="ctx-kbd">⌘K</kbd>
         </button>
-        <button onClick={() => { onOpenLauncher(); onClose(); }}><LayoutGrid size={13} /><span>Open launcher</span></button>
-        <button onClick={() => { onToggleArrange(); onClose(); }}><RefreshCw size={13} /><span>{arrangeMode ? 'Done arranging' : 'Arrange desktop'}</span></button>
-        <button onClick={() => onWallpaperChange(WALLPAPERS[(WALLPAPERS.findIndex(w => w.id === wallpaper) + 1) % WALLPAPERS.length].id)}><Image size={13} /><span>Next wallpaper</span><ChevronRight size={12} /></button>
-        <div className="ctx-wallpaper-options">{WALLPAPERS.map(w => <button key={w.id} className={wallpaper === w.id ? 'is-current' : ''} title={w.name} aria-label={w.name} onClick={() => { onWallpaperChange(w.id); onClose(); }}><span className={`wallpaper-swatch swatch-${w.id}`} /></button>)}</div>
-        <div className="ctx-sep" />
-        <button onClick={onClose}><span className="ctx-dismiss">Dismiss</span></button>
+        <button type="button" role="menuitem" onClick={() => { onOpenLauncher(); onClose(); }}>
+          <LayoutGrid size={13} />
+          <span>Open app launcher</span>
+        </button>
+        {visibleWindowCount >= 2 && (
+          <button type="button" role="menuitem" onClick={() => { onTileWindows(); onClose(); }}>
+            <Columns2 size={13} />
+            <span>Tile windows side by side</span>
+          </button>
+        )}
+        {visibleWindowCount >= 1 && (
+          <button type="button" role="menuitem" onClick={() => { onMinimizeAllWindows(); onClose(); }}>
+            <Minimize2 size={13} />
+            <span>Show desktop</span>
+          </button>
+        )}
+        {visibleWindowCount === 0 && minimizedWindowCount >= 1 && (
+          <button type="button" role="menuitem" onClick={() => { onRestoreWindows(); onClose(); }}>
+            <Layers size={13} />
+            <span>Restore {minimizedWindowCount === 1 ? 'window' : `${minimizedWindowCount} windows`}</span>
+          </button>
+        )}
+
+        <div className="ctx-sep" role="separator" />
+
+        <button type="button" role="menuitem" onClick={() => { onToggleArrange(); onClose(); }}>
+          <Move size={13} />
+          <span>{arrangeMode ? 'Done arranging' : 'Arrange desktop'}</span>
+          <kbd className="ctx-kbd">F2</kbd>
+        </button>
+        <button type="button" role="menuitem" onClick={() => { onOpenWidgets(); onClose(); }}>
+          <Code2 size={13} />
+          <span>Manage widgets</span>
+        </button>
+        <button type="button" role="menuitem" onClick={() => { onToggleTheme(); onClose(); }}>
+          {theme === 'dark' ? <Sun size={13} /> : <Moon size={13} />}
+          <span>{theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}</span>
+        </button>
+        {canRotateQuote && (
+          <button type="button" role="menuitem" onClick={() => { onNextQuote(); onClose(); }}>
+            <RefreshCw size={13} />
+            <span>Next desktop quote</span>
+          </button>
+        )}
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() =>
+            onWallpaperChange(
+              WALLPAPERS[(WALLPAPERS.findIndex((w) => w.id === wallpaper) + 1) % WALLPAPERS.length].id
+            )
+          }
+        >
+          <Image size={13} />
+          <span>Next wallpaper</span>
+          <span className="ctx-meta">{currentWallpaperName}</span>
+        </button>
+        <div className="ctx-wallpaper-options" role="group" aria-label="Choose wallpaper">
+          {WALLPAPERS.map((w) => (
+            <button
+              type="button"
+              key={w.id}
+              className={wallpaper === w.id ? 'is-current' : ''}
+              title={w.name}
+              aria-label={w.name}
+              onClick={() => onWallpaperChange(w.id)}
+            >
+              <span className={`wallpaper-swatch swatch-${w.id}`} />
+            </button>
+          ))}
+        </div>
+
+        <div className="ctx-sep" role="separator" />
+
+        <button type="button" role="menuitem" onClick={() => { onOpenSettings(); onClose(); }}>
+          <SettingsIcon size={13} />
+          <span>Workspace settings</span>
+        </button>
+        {hasPassword && (
+          <button type="button" role="menuitem" onClick={() => { onLock(); onClose(); }}>
+            <Lock size={13} />
+            <span>Lock workspace</span>
+          </button>
+        )}
       </div>
     </>
   );
@@ -621,7 +808,7 @@ export function App() {
 
   /* Separate action menu state for launcher, desktop icon, and dock to prevent double menus */
   const [launcherActionMenu, setLauncherActionMenu] = useState<AppId | null>(null);
-  const [iconActionMenu, setIconActionMenu]         = useState<AppId | null>(null);
+  const [iconActionMenu, setIconActionMenu]         = useState<{ id: AppId; x: number; y: number } | null>(null);
   const [dockActionMenu, setDockActionMenu]         = useState<{ id: AppId; x: number } | null>(null);
   const [pinnedDesktop, setPinnedDesktop] = useState<AppId[]>(() => readPinned(PINNED_DESKTOP_KEY, readShortcuts()));
   const [pinnedDock, setPinnedDock]     = useState<AppId[]>(() => readPinned(PINNED_DOCK_KEY, readShortcuts()));
@@ -676,10 +863,13 @@ export function App() {
   const openLauncher = useCallback(() => {
     captureFocusOrigin();
     setSpotlightOpen(false);
+    setCtxMenu(null);
+    setIconActionMenu(null);
+    setDockActionMenu(null);
+    setTrayOpen(false);
     setSearchQuery('');
     setLauncherActiveIdx(0);
     setLauncherActionMenu(null);
-    setDockActionMenu(null);
     setMenuOpen(true);
   }, [captureFocusOrigin]);
 
@@ -997,9 +1187,74 @@ export function App() {
       persistWindowCounter(next.nextId);
       return next;
     });
-    setMenuOpen(false); setSpotlightOpen(false); setLauncherActionMenu(null); setDockActionMenu(null);
+    setMenuOpen(false); setSpotlightOpen(false); setLauncherActionMenu(null); setIconActionMenu(null); setDockActionMenu(null); setCtxMenu(null); setTrayOpen(false);
     restoreFocusRef.current = null;
   }, [shortcuts]);
+
+  const handleCreateQuickNote = useCallback(
+    (checklist = false) => {
+      const current = readNotesState();
+      const fresh = createScratchpadNote({
+        title: checklist ? 'Tasks' : '',
+        content: checklist ? SAMPLE_CHECKLIST_TEMPLATE : '',
+      });
+      saveNotesState({
+        notes: [fresh, ...current.notes],
+        activeNoteId: fresh.id,
+      });
+      window.dispatchEvent(new Event('storage'));
+      openApp('notes', true);
+    },
+    [openApp]
+  );
+
+  const handleOpenNewBrowserTab = useCallback(() => {
+    openApp('browser', true);
+    enqueueBrowserNavigation({ kind: 'start' });
+  }, [openApp]);
+
+  const handleTileTopWindows = useCallback(() => {
+    setWindowState((s) => tileTopTwoWindows(s, window.innerWidth, window.innerHeight));
+  }, []);
+
+  const handleMinimizeAllWindows = useCallback(() => {
+    setWindowState((s) => ({
+      ...s,
+      activeWindowId: null,
+      windows: s.windows.map((w) => ({ ...w, status: 'minimized' as const })),
+    }));
+  }, []);
+
+  const handleRestoreMinimizedWindows = useCallback(() => {
+    setWindowState((s) => {
+      const restored = s.windows.map((w) =>
+        w.status === 'minimized' ? { ...w, status: 'normal' as const } : w
+      );
+      return {
+        ...s,
+        windows: restored,
+        activeWindowId: s.activeWindowId ?? restored.at(-1)?.id ?? null,
+      };
+    });
+  }, []);
+
+  const handleLockWorkspace = useCallback(() => {
+    if (!passwordRecord) return;
+    try {
+      sessionStorage.removeItem(SESSION_UNLOCKED);
+    } catch {}
+    setScreen('lock');
+  }, [passwordRecord]);
+
+  useEffect(() => {
+    const handleOpenAppRequest = (event: Event) => {
+      const detail = (event as CustomEvent<OpenAppEventDetail>).detail;
+      if (!detail?.appId) return;
+      openApp(detail.appId, detail.preferExisting ?? true);
+    };
+    window.addEventListener(NEXUS_OPEN_APP_EVENT, handleOpenAppRequest);
+    return () => window.removeEventListener(NEXUS_OPEN_APP_EVENT, handleOpenAppRequest);
+  }, [openApp]);
 
   const updateWindow  = useCallback((id: string, fn: (w: DesktopWindow) => DesktopWindow) =>
     setWindowState(s => ({ ...s, windows: s.windows.map(w => w.id === id ? fn(w) : w) })), []);
@@ -1502,15 +1757,39 @@ export function App() {
   if (screen === 'lock')   return <LockScreen now={now} wallpaper={prefs.wallpaper} theme={prefs.theme} passwordRecord={passwordRecord} onUnlock={handleUnlock} />;
 
   const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...(prefs.showSeconds ? { second: '2-digit' } : {}) });
-  const activeDesktopMenuApp = iconActionMenu ? getAppDefinition(iconActionMenu, shortcuts) : undefined;
+  const activeDesktopMenuApp = iconActionMenu ? getAppDefinition(iconActionMenu.id, shortcuts) : undefined;
   const activeDockMenuApp = dockActionMenu ? getAppDefinition(dockActionMenu.id, shortcuts) : undefined;
+  const visibleWindowCount = windowState.windows.filter((w) => w.status !== 'minimized').length;
+  const minimizedWindowCount = windowState.windows.filter((w) => w.status === 'minimized').length;
   const currentMessage = prefs.showMessages && messages.length > 0
     ? messages[messageIndex % messages.length]
     : undefined;
 
+  const openDesktopContextMenu = (e: React.MouseEvent<HTMLElement>) => {
+    const target = e.target as HTMLElement;
+    if (
+      target.closest(
+        '.desktop-icon,.wf,.app-launcher,.ctx-menu,.tray-menu,.dock,.desktop-tray,.desktop-widget,.arrange-banner,.spotlight-modal,.changelog-modal,.setup-card'
+      )
+    ) {
+      return;
+    }
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY });
+    setIconActionMenu(null);
+    setDockActionMenu(null);
+    setLauncherActionMenu(null);
+    setMenuOpen(false);
+    setTrayOpen(false);
+  };
+
   /* ── Render desktop ──────────────────────────────────────────────────── */
   return (
-    <div className={`desktop theme-${prefs.theme} wallpaper-${prefs.wallpaper}`} onClick={closeAll}>
+    <div
+      className={`desktop theme-${prefs.theme} wallpaper-${prefs.wallpaper}`}
+      onClick={closeAll}
+      onContextMenu={openDesktopContextMenu}
+    >
       {/* Wallpaper blobs */}
       <div key={prefs.wallpaper} className="desktop-wallpaper wallpaper-transition" aria-hidden>
         <div className="wp-blob wp-blob-1" />
@@ -1535,17 +1814,11 @@ export function App() {
         </div>
       )}
 
-      {/* ── Desktop canvas ── */}
+      {/* ── Desktop canvas (icons only; floating menus render at root z-index) ── */}
       <section
         className={`desktop-canvas ${arrangeMode ? 'is-arranging' : ''}`}
         aria-label="Desktop"
         onClick={() => setSelectedIcon(null)}
-        onContextMenu={e => {
-          if ((e.target as HTMLElement).closest('.desktop-icon,.wf,.app-launcher,.ctx-menu,.tray-menu,.dock,.desktop-widget')) return;
-          e.preventDefault();
-          setCtxMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 160) });
-          setMenuOpen(false);
-        }}
       >
         {/* Pinned desktop icons */}
         {pinnedDesktop.map((id, index) => {
@@ -1560,7 +1833,16 @@ export function App() {
               onPointerDown={e => { e.stopPropagation(); setSelectedIcon(id); handleIconPointerDown(e, id); }}
               onDoubleClick={() => openApp(id)}
               onClick={e => { e.stopPropagation(); if (!arrangeMode) setSelectedIcon(id); }}
-              onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setSelectedIcon(id); setIconActionMenu(id); setLauncherActionMenu(null); setDockActionMenu(null); }}
+              onContextMenu={e => {
+                e.preventDefault();
+                e.stopPropagation();
+                setSelectedIcon(id);
+                setIconActionMenu({ id, x: e.clientX, y: e.clientY });
+                setCtxMenu(null);
+                setLauncherActionMenu(null);
+                setDockActionMenu(null);
+                setTrayOpen(false);
+              }}
               title={arrangeMode ? 'Drag to move' : `Open ${app.name}`}
             >
               <span className="di-img"><AppIconGraphic app={app} size={24} /></span>
@@ -1568,54 +1850,6 @@ export function App() {
             </button>
           );
         })}
-
-        {/* Desktop right-click menu */}
-        {ctxMenu && (
-          <DesktopCtxMenu
-            x={ctxMenu.x} y={ctxMenu.y}
-            onClose={() => setCtxMenu(null)}
-            onOpenSpotlight={openSpotlight}
-            onOpenLauncher={openLauncher}
-            onToggleArrange={() => setArrangeMode(v => !v)}
-            arrangeMode={arrangeMode}
-            wallpaper={prefs.wallpaper}
-            onWallpaperChange={wallpaper => setPrefs(p => ({ ...p, wallpaper }))}
-          />
-        )}
-
-        {/* Icon right-click pin menu — from desktop icons */}
-        {iconActionMenu && activeDesktopMenuApp && (
-          <>
-            <div className="ctx-scrim" onClick={() => setIconActionMenu(null)} />
-            <div className="ctx-menu" style={{ left: Math.min((desktopPos[iconActionMenu]?.x ?? 24) + 60, window.innerWidth - 210), top: Math.min((desktopPos[iconActionMenu]?.y ?? 48) + 60, window.innerHeight - 150) }}>
-              <button onClick={() => { openApp(iconActionMenu); setIconActionMenu(null); }}>
-                <LayoutGrid size={13} />
-                <span>Open {activeDesktopMenuApp.name}</span>
-              </button>
-              {activeDesktopMenuApp.shortcut && (
-                <a
-                  href={activeDesktopMenuApp.shortcut.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ctx-link"
-                  onClick={() => setIconActionMenu(null)}
-                >
-                  <ExternalLink size={13} />
-                  <span>Open in browser tab</span>
-                </a>
-              )}
-              <div className="ctx-sep" />
-              <button onClick={() => { togglePin(iconActionMenu, 'desktop'); setIconActionMenu(null); }}>
-                {pinnedDesktop.includes(iconActionMenu) ? <Check size={13} /> : <Plus size={13} />}
-                <span>{pinnedDesktop.includes(iconActionMenu) ? 'Remove from desktop' : 'Pin to desktop'}</span>
-              </button>
-              <button onClick={() => { togglePin(iconActionMenu, 'dock'); setIconActionMenu(null); }}>
-                {pinnedDock.includes(iconActionMenu) ? <Check size={13} /> : <Plus size={13} />}
-                <span>{pinnedDock.includes(iconActionMenu) ? 'Remove from dock' : 'Pin to dock'}</span>
-              </button>
-            </div>
-          </>
-        )}
       </section>
 
       {/* ── Desktop Widgets (Interactive in normal mode, draggable/resizable in Arrange Mode) ── */}
@@ -1719,7 +1953,7 @@ export function App() {
           <WindowFrame
             key={win.id} window={win}
             active={windowState.activeWindowId === win.id}
-            zIndex={20 + (windowState.activeWindowId === win.id ? windowState.windows.length : idx)}
+            zIndex={30 + (windowState.activeWindowId === win.id ? windowState.windows.length : idx)}
             onFocus={() => focusWindow(win.id)}
             onClose={() => closeWindow(win.id)}
             onMinimize={() => minimizeWindow(win.id)}
@@ -1812,13 +2046,21 @@ export function App() {
                 <button type="button" className={prefs.menuView === 'grid' ? 'is-active' : ''} onClick={() => setPrefs(p => ({ ...p, menuView: 'grid' }))} aria-label="Grid view"><Grid2X2 size={12} /></button>
               </div>
             </div>
-            <div ref={launcherListRef} className={`launcher-list ${prefs.menuView === 'grid' ? 'is-grid' : ''}`}>
+            <div
+              ref={launcherListRef}
+              className={`launcher-list ${prefs.menuView === 'grid' ? 'is-grid' : ''} ${launcherActionMenu ? 'has-open-menu' : ''}`}
+            >
               {visibleApps.map((app, index) => {
                 const dp = pinnedDesktop.includes(app.id);
                 const dk = pinnedDock.includes(app.id);
                 const isOpen = launcherActionMenu === app.id;
                 const isKbActive = index === clampedLauncherIdx;
                 const toneClass = app.shortcut ? 'icon-shortcut' : `icon-${app.id}`;
+                const placement = computeLauncherMenuPlacement(
+                  index,
+                  visibleApps.length,
+                  prefs.menuView
+                );
                 return (
                   <div
                     className={`l-row ${toneClass} ${isOpen ? 'is-open' : ''} ${isKbActive ? 'is-kb-active' : ''}`}
@@ -1844,22 +2086,73 @@ export function App() {
                       </span>
                       {(dp || dk) && <Pin size={10} className="l-pin" />}
                     </button>
-                    <button type="button" className="l-more" onClick={e => { e.stopPropagation(); setLauncherActionMenu(a => a === app.id ? null : app.id); setIconActionMenu(null); setDockActionMenu(null); }} aria-label={`Options for ${app.name}`}>
+                    <button
+                      type="button"
+                      className="l-more"
+                      onClick={e => {
+                        e.stopPropagation();
+                        setLauncherActionMenu(a => a === app.id ? null : app.id);
+                        setIconActionMenu(null);
+                        setDockActionMenu(null);
+                      }}
+                      aria-label={`Options for ${app.name}`}
+                      aria-expanded={isOpen}
+                    >
                       <MoreHorizontal size={14} />
                     </button>
                     {isOpen && (
-                      <div className="l-pin-menu" onClick={e => e.stopPropagation()}>
-                        <button type="button" onClick={() => { togglePin(app.id, 'desktop'); setLauncherActionMenu(null); }}>
+                      <div
+                        className={`l-pin-menu align-${placement.align}${placement.flipUp ? ' is-flip-up' : ''}`}
+                        role="menu"
+                        onClick={e => e.stopPropagation()}
+                      >
+                        <button type="button" role="menuitem" onClick={() => openApp(app.id)}>
+                          <LayoutGrid size={12} />
+                          <span>Open {app.name}</span>
+                        </button>
+                        {app.id === 'notes' && (
+                          <>
+                            <button type="button" role="menuitem" onClick={() => handleCreateQuickNote(false)}>
+                              <StickyNote size={12} />
+                              <span>New note</span>
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => handleCreateQuickNote(true)}>
+                              <CheckSquare size={12} />
+                              <span>New checklist</span>
+                            </button>
+                          </>
+                        )}
+                        {app.id === 'browser' && (
+                          <button type="button" role="menuitem" onClick={handleOpenNewBrowserTab}>
+                            <Compass size={12} />
+                            <span>New search tab</span>
+                          </button>
+                        )}
+                        {app.id === 'widgets' && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setArrangeMode(v => !v);
+                              closeLauncher(false);
+                            }}
+                          >
+                            <Move size={12} />
+                            <span>{arrangeMode ? 'Done arranging' : 'Arrange desktop'}</span>
+                          </button>
+                        )}
+                        <div className="ctx-sep" role="separator" />
+                        <button type="button" role="menuitem" onClick={() => { togglePin(app.id, 'desktop'); setLauncherActionMenu(null); }}>
                           {dp ? <Check size={12} /> : <Plus size={12} />}
                           <span>{dp ? 'Remove from desktop' : 'Pin to desktop'}</span>
                         </button>
-                        <button type="button" onClick={() => { togglePin(app.id, 'dock'); setLauncherActionMenu(null); }}>
+                        <button type="button" role="menuitem" onClick={() => { togglePin(app.id, 'dock'); setLauncherActionMenu(null); }}>
                           {dk ? <Check size={12} /> : <Plus size={12} />}
                           <span>{dk ? 'Remove from dock' : 'Pin to dock'}</span>
                         </button>
                         {app.shortcut && (
                           <>
-                            <div className="ctx-sep" />
+                            <div className="ctx-sep" role="separator" />
                             <a
                               href={app.shortcut.url}
                               target="_blank"
@@ -1870,7 +2163,7 @@ export function App() {
                               <ExternalLink size={12} />
                               <span>Open in browser tab</span>
                             </a>
-                            <button type="button" onClick={() => openApp('bookmarks')}>
+                            <button type="button" role="menuitem" onClick={() => openApp('bookmarks')}>
                               <Bookmark size={12} />
                               <span>Manage shortcuts</span>
                             </button>
@@ -1893,38 +2186,213 @@ export function App() {
               )}
             </div>
             <div className="launcher-footer">
-              <button type="button" className="launcher-manage-links" onClick={() => openApp('bookmarks')}>
-                <Plus size={11} /><span>Add web shortcut</span>
-              </button>
-              <button
-                type="button"
-                className="changelog-trigger"
-                onClick={e => {
-                  captureFocusOrigin();
-                  e.stopPropagation();
-                  setMenuOpen(false);
-                  setChangelogOpen(true);
-                }}
-              >
-                <History size={13} /><span>Changelog</span><span className="version-pill">{NEXUS_VERSION_TAG}</span>
-              </button>
+              <div className="launcher-footer-actions">
+                <button
+                  type="button"
+                  className="launcher-manage-links"
+                  onClick={() => handleCreateQuickNote(false)}
+                >
+                  <StickyNote size={11} />
+                  <span>New note</span>
+                </button>
+                <button
+                  type="button"
+                  className="launcher-manage-links"
+                  onClick={() => openApp('bookmarks')}
+                >
+                  <Plus size={11} />
+                  <span>Add shortcut</span>
+                </button>
+              </div>
+              <div className="launcher-footer-meta">
+                <button
+                  type="button"
+                  className="launcher-icon-btn"
+                  onClick={() => setPrefs(p => ({ ...p, theme: p.theme === 'light' ? 'dark' : 'light' }))}
+                  title={prefs.theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                  aria-label={prefs.theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                >
+                  {prefs.theme === 'dark' ? <Sun size={13} /> : <Moon size={13} />}
+                </button>
+                <button
+                  type="button"
+                  className="launcher-icon-btn"
+                  onClick={() => openApp('settings')}
+                  title="Workspace settings"
+                  aria-label="Workspace settings"
+                >
+                  <SettingsIcon size={13} />
+                </button>
+                {passwordRecord && (
+                  <button
+                    type="button"
+                    className="launcher-icon-btn"
+                    onClick={() => { closeLauncher(false); handleLockWorkspace(); }}
+                    title="Lock workspace"
+                    aria-label="Lock workspace"
+                  >
+                    <Lock size={13} />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="changelog-trigger"
+                  onClick={e => {
+                    captureFocusOrigin();
+                    e.stopPropagation();
+                    setMenuOpen(false);
+                    setLauncherActionMenu(null);
+                    setChangelogOpen(true);
+                  }}
+                >
+                  <History size={13} /><span>Changelog</span><span className="version-pill">{NEXUS_VERSION_TAG}</span>
+                </button>
+              </div>
             </div>
           </section>
         </>
       )}
 
+      {/* ── Desktop right-click menu (rendered at desktop root so it layers above windows & widgets) ── */}
+      {ctxMenu && (
+        <DesktopCtxMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onClose={() => setCtxMenu(null)}
+          onCreateNote={() => handleCreateQuickNote(false)}
+          onCreateChecklist={() => handleCreateQuickNote(true)}
+          onOpenNewBrowserTab={handleOpenNewBrowserTab}
+          onOpenBookmarks={() => openApp('bookmarks')}
+          onOpenSpotlight={openSpotlight}
+          onOpenLauncher={openLauncher}
+          visibleWindowCount={visibleWindowCount}
+          minimizedWindowCount={minimizedWindowCount}
+          onTileWindows={handleTileTopWindows}
+          onMinimizeAllWindows={handleMinimizeAllWindows}
+          onRestoreWindows={handleRestoreMinimizedWindows}
+          onToggleArrange={() => setArrangeMode(v => !v)}
+          arrangeMode={arrangeMode}
+          onOpenWidgets={() => openApp('widgets')}
+          theme={prefs.theme}
+          onToggleTheme={() => setPrefs(p => ({ ...p, theme: p.theme === 'light' ? 'dark' : 'light' }))}
+          canRotateQuote={prefs.showMessages && messages.length > 1}
+          onNextQuote={() => setMessageIndex(i => (i + 1) % Math.max(messages.length, 1))}
+          wallpaper={prefs.wallpaper}
+          onWallpaperChange={wallpaper => setPrefs(p => ({ ...p, wallpaper }))}
+          onOpenSettings={() => openApp('settings')}
+          hasPassword={Boolean(passwordRecord)}
+          onLock={handleLockWorkspace}
+        />
+      )}
+
+      {/* ── Desktop icon right-click menu (rendered at desktop root) ── */}
+      {iconActionMenu && activeDesktopMenuApp && (() => {
+        const clampedIconPos = clampMenuPosition(
+          iconActionMenu.x,
+          iconActionMenu.y,
+          216,
+          activeDesktopMenuApp.id === 'notes' ? 236 : 190,
+          window.innerWidth,
+          window.innerHeight,
+          12
+        );
+        return (
+          <>
+            <div
+              className="ctx-scrim"
+              onClick={() => setIconActionMenu(null)}
+              onContextMenu={e => { e.preventDefault(); setIconActionMenu(null); }}
+            />
+            <div
+              className="ctx-menu"
+              style={{ left: clampedIconPos.x, top: clampedIconPos.y }}
+              role="menu"
+              onClick={e => e.stopPropagation()}
+            >
+              <button type="button" role="menuitem" onClick={() => { openApp(iconActionMenu.id); setIconActionMenu(null); }}>
+                <LayoutGrid size={13} />
+                <span>Open {activeDesktopMenuApp.name}</span>
+              </button>
+              {iconActionMenu.id === 'notes' && (
+                <>
+                  <button type="button" role="menuitem" onClick={() => { handleCreateQuickNote(false); setIconActionMenu(null); }}>
+                    <StickyNote size={13} />
+                    <span>New note</span>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { handleCreateQuickNote(true); setIconActionMenu(null); }}>
+                    <CheckSquare size={13} />
+                    <span>New checklist</span>
+                  </button>
+                </>
+              )}
+              {iconActionMenu.id === 'browser' && (
+                <button type="button" role="menuitem" onClick={() => { handleOpenNewBrowserTab(); setIconActionMenu(null); }}>
+                  <Compass size={13} />
+                  <span>New search tab</span>
+                </button>
+              )}
+              {activeDesktopMenuApp.shortcut && (
+                <a
+                  href={activeDesktopMenuApp.shortcut.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ctx-link"
+                  onClick={() => setIconActionMenu(null)}
+                >
+                  <ExternalLink size={13} />
+                  <span>Open in browser tab</span>
+                </a>
+              )}
+              <div className="ctx-sep" role="separator" />
+              <button type="button" role="menuitem" onClick={() => { togglePin(iconActionMenu.id, 'desktop'); setIconActionMenu(null); }}>
+                {pinnedDesktop.includes(iconActionMenu.id) ? <Check size={13} /> : <Plus size={13} />}
+                <span>{pinnedDesktop.includes(iconActionMenu.id) ? 'Remove from desktop' : 'Pin to desktop'}</span>
+              </button>
+              <button type="button" role="menuitem" onClick={() => { togglePin(iconActionMenu.id, 'dock'); setIconActionMenu(null); }}>
+                {pinnedDock.includes(iconActionMenu.id) ? <Check size={13} /> : <Plus size={13} />}
+                <span>{pinnedDock.includes(iconActionMenu.id) ? 'Remove from dock' : 'Pin to dock'}</span>
+              </button>
+            </div>
+          </>
+        );
+      })()}
+
       {/* ── Dock right-click menu ── */}
       {dockActionMenu && activeDockMenuApp && (
         <>
-          <div className="ctx-scrim" onClick={() => setDockActionMenu(null)} />
+          <div
+            className="ctx-scrim"
+            onClick={() => setDockActionMenu(null)}
+            onContextMenu={e => { e.preventDefault(); setDockActionMenu(null); }}
+          />
           <div
             className="ctx-menu dock-ctx-menu"
-            style={{ left: Math.max(12, Math.min(dockActionMenu.x - 95, window.innerWidth - 210)) }}
+            style={{ left: Math.max(12, Math.min(dockActionMenu.x - 102, window.innerWidth - 220)) }}
+            role="menu"
+            onClick={e => e.stopPropagation()}
           >
-            <button onClick={() => { openApp(dockActionMenu.id); setDockActionMenu(null); }}>
+            <button type="button" role="menuitem" onClick={() => { openApp(dockActionMenu.id); setDockActionMenu(null); }}>
               <LayoutGrid size={13} />
               <span>Open {activeDockMenuApp.name}</span>
             </button>
+            {dockActionMenu.id === 'notes' && (
+              <>
+                <button type="button" role="menuitem" onClick={() => { handleCreateQuickNote(false); setDockActionMenu(null); }}>
+                  <StickyNote size={13} />
+                  <span>New note</span>
+                </button>
+                <button type="button" role="menuitem" onClick={() => { handleCreateQuickNote(true); setDockActionMenu(null); }}>
+                  <CheckSquare size={13} />
+                  <span>New checklist</span>
+                </button>
+              </>
+            )}
+            {dockActionMenu.id === 'browser' && (
+              <button type="button" role="menuitem" onClick={() => { handleOpenNewBrowserTab(); setDockActionMenu(null); }}>
+                <Compass size={13} />
+                <span>New search tab</span>
+              </button>
+            )}
             {activeDockMenuApp.shortcut && (
               <a
                 href={activeDockMenuApp.shortcut.url}
@@ -1937,12 +2405,12 @@ export function App() {
                 <span>Open in browser tab</span>
               </a>
             )}
-            <div className="ctx-sep" />
-            <button onClick={() => { togglePin(dockActionMenu.id, 'dock'); setDockActionMenu(null); }}>
+            <div className="ctx-sep" role="separator" />
+            <button type="button" role="menuitem" onClick={() => { togglePin(dockActionMenu.id, 'dock'); setDockActionMenu(null); }}>
               {pinnedDock.includes(dockActionMenu.id) ? <Check size={13} /> : <Plus size={13} />}
               <span>{pinnedDock.includes(dockActionMenu.id) ? 'Remove from dock' : 'Keep in dock'}</span>
             </button>
-            <button onClick={() => { togglePin(dockActionMenu.id, 'desktop'); setDockActionMenu(null); }}>
+            <button type="button" role="menuitem" onClick={() => { togglePin(dockActionMenu.id, 'desktop'); setDockActionMenu(null); }}>
               {pinnedDesktop.includes(dockActionMenu.id) ? <Check size={13} /> : <Plus size={13} />}
               <span>{pinnedDesktop.includes(dockActionMenu.id) ? 'Remove from desktop' : 'Pin to desktop'}</span>
             </button>

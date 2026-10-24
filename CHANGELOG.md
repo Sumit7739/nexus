@@ -1,6 +1,28 @@
 # Nexus Changelog
 
-All notable user-facing changes are recorded by release. Versions increment by `0.1` (`0.8.0` → `0.9.0` → `1.0.0` → `1.1.0`) on every major feature milestone and stay synchronized with `src/data/version.ts`, `package.json`, and `public/manifest.json`.
+All notable user-facing changes are recorded by release. Versions increment by `0.1` (`0.8.0` → `0.9.0` → `1.0.0` → `1.1.0` → `1.2.0` → `1.3.0`) on every major feature milestone and stay synchronized with `src/data/version.ts`, `package.json`, and `public/manifest.json`.
+
+## [1.3.0] — Desktop Context Menu, Quick Note Creation & Menu Layering Fixes
+
+### Added
+- **Desktop right-click quick creation**: create a blank **New note** or **New checklist** directly in Scratchpad, open a **New browser tab** in Nexus Browser, or **Add web shortcut** in one click from anywhere on the desktop.
+- **Contextual desktop & window actions**: added **Tile windows side by side** (snaps top two visible windows into a 50/50 split while preserving their natural left/right screen order), **Show desktop** / **Restore windows**, **Manage widgets**, quick **Light / Dark mode** toggle, **Next desktop quote**, **Workspace settings**, and **Lock workspace** (when a passcode is configured).
+- **App Launcher, Desktop Icon & Dock menu actions**: added contextual per-app actions (**New note**, **New checklist**, **New search tab**, **Arrange desktop**) across all app menus plus quick **New note**, **Theme**, **Settings**, and **Lock** controls in the App Launcher footer.
+
+### Fixed
+- **App Launcher dropdown stacking & alignment**: elevated active `.l-row.is-open` stacking context above sibling grid/list tiles so `.l-pin-menu` never renders behind neighboring app icons, with column-aware horizontal alignment and row-aware vertical flipping.
+- **Global modal & context-menu z-index hierarchy**: moved Desktop and Desktop Icon context menus out of `.desktop-canvas` overflow clipping, added live viewport-boundary clamping, and unified z-index ordering across windows, dock, system tray, context menus, App Launcher, Spotlight, Changelog, and Passcode modals.
+
+## [1.2.0] — Context-Aware Selection Actions Across Browser & Scratchpad
+
+### Added
+- **Browser → Scratchpad selection actions**: highlight any paragraph, AI Overview synthesis, or live search result snippet in Nexus Browser to send it to your active Scratchpad note with automatic source attribution, create a new note from the selection, or capture it directly as an interactive `- [ ]` checklist task.
+- **Scratchpad → Browser research handoff**: highlight text in Scratchpad (across **Write**, **Split**, and **Preview** modes) and click **Research in Browser** to launch a Gemini AI + Live Web Search tab in Nexus Browser, or open selected URLs directly.
+- **Turn selected text into a task**: convert single lines, bullet lists, or multi-line selections in Scratchpad into `- [ ]` checklist items in-place, or extract any passage into a standalone note.
+- One-click **Save to Scratchpad** action on Gemini AI Overview cards and automatic cross-window opening/focusing between Browser and Scratchpad.
+
+### Updated
+- Scratchpad's `Task` formatting toolbar button now converts multi-line selections into checklist items in one click.
 
 ## [1.1.0] — Spotlight Command Palette & Instant Workspace Search
 

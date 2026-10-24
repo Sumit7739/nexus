@@ -300,6 +300,7 @@ export interface AiSearchResult {
 export const BROWSER_NAVIGATE_EVENT = 'nexus:browser-navigate';
 
 export type BrowserNavigationRequest =
+  | { kind: 'start' }
   | { kind: 'url'; url: string; title?: string }
   | { kind: 'search'; query: string; engine: SearchEngineId };
 

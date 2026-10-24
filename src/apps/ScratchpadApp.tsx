@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -11,8 +12,10 @@ import {
   Check,
   CheckSquare,
   Code,
+  Compass,
   Copy,
   Download,
+  ExternalLink,
   Heading2,
   Italic,
   Minus,
@@ -21,6 +24,7 @@ import {
   Plus,
   Quote,
   Search,
+  Sparkles,
   StickyNote,
   Trash2,
   X,
@@ -44,6 +48,15 @@ import {
   type NotesState,
   type ScratchpadNote,
 } from '../data/notes';
+import { SelectionActionBar } from '../components/SelectionActionBar';
+import { classifyOmniboxInput } from '../data/browser';
+import {
+  computeFloatingBarPosition,
+  convertPreviewSelectionToTasksInMarkdown,
+  convertRangeInMarkdownToTasks,
+  deriveNoteTitleFromSelection,
+  researchSelectionInBrowser,
+} from '../data/context-actions';
 
 type EditorMode = 'write' | 'split' | 'preview';
 type NoteFilter = 'all' | 'pinned' | 'tasks';
@@ -221,9 +234,41 @@ export function ScratchpadApp() {
   const [filter, setFilter] = useState<NoteFilter>('all');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [copiedNote, setCopiedNote] = useState(false);
+  const [selectionMenu, setSelectionMenu] = useState<{
+    origin: 'editor' | 'preview';
+    text: string;
+    selectionStart: number;
+    selectionEnd: number;
+    x: number;
+    y: number;
+    placement: 'above' | 'below';
+  } | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const previewPaneRef = useRef<HTMLDivElement | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
+
+  const showActionNotice = useCallback((msg: string) => {
+    setActionNotice(msg);
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+    }
+    noticeTimerRef.current = window.setTimeout(() => {
+      setActionNotice(null);
+      noticeTimerRef.current = null;
+    }, 2400);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current !== null) {
+        window.clearTimeout(noticeTimerRef.current);
+      }
+    };
+  }, []);
 
   /* Persist whenever state changes */
   useEffect(() => {
@@ -243,6 +288,10 @@ export function ScratchpadApp() {
   const activeNote: ScratchpadNote = useMemo(() => {
     return state.notes.find((n) => n.id === state.activeNoteId) ?? state.notes[0];
   }, [state]);
+
+  useEffect(() => {
+    setSelectionMenu(null);
+  }, [activeNote.id, mode]);
 
   const sortedNotes = useMemo(() => sortNotesForSidebar(state.notes), [state.notes]);
 
@@ -377,7 +426,20 @@ export function ScratchpadApp() {
     const el = textareaRef.current;
     if (!el) return;
     const start = el.selectionStart;
+    const end = el.selectionEnd;
     const val = activeNote.content;
+
+    if (prefix === '- [ ] ' && end > start) {
+      const converted = convertRangeInMarkdownToTasks(val, start, end);
+      updateActiveNote({ content: converted.content });
+      setSelectionMenu(null);
+      window.requestAnimationFrame(() => {
+        el.focus();
+        el.setSelectionRange(converted.nextSelectionStart, converted.nextSelectionEnd);
+      });
+      return;
+    }
+
     const lineStart = val.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
     const lineEndIdx = val.indexOf('\n', start);
     const lineEnd = lineEndIdx === -1 ? val.length : lineEndIdx;
@@ -414,6 +476,167 @@ export function ScratchpadApp() {
       const nextCursor = Math.max(lineStart, start + delta);
       el.setSelectionRange(nextCursor, nextCursor);
     });
+  };
+
+  /* ── Context-Aware Selection Detection (Editor + Preview) ── */
+  const evaluateEditorSelection = (pointer?: { clientX: number; clientY: number }) => {
+    const el = textareaRef.current;
+    const stage = stageRef.current;
+    if (!el || !stage) return;
+
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const raw = el.value.slice(start, end);
+    if (end <= start || raw.trim().length < 2) {
+      setSelectionMenu((prev) => (prev?.origin === 'editor' ? null : prev));
+      return;
+    }
+
+    const stageRect = stage.getBoundingClientRect();
+    const editorRect = el.getBoundingClientRect();
+
+    const anchor = pointer
+      ? {
+          left: pointer.clientX - 20,
+          top: pointer.clientY - 22,
+          bottom: pointer.clientY + 12,
+          width: 40,
+        }
+      : {
+          left: editorRect.left + editorRect.width / 2 - 20,
+          top: editorRect.top + 52,
+          bottom: editorRect.top + 72,
+          width: 40,
+        };
+
+    const pos = computeFloatingBarPosition(anchor, stageRect, {
+      width: 390,
+      height: 38,
+    });
+
+    setSelectionMenu({
+      origin: 'editor',
+      text: raw,
+      selectionStart: start,
+      selectionEnd: end,
+      x: pos.x,
+      y: pos.y,
+      placement: pos.placement,
+    });
+  };
+
+  const evaluatePreviewSelection = () => {
+    const previewEl = previewPaneRef.current;
+    const stage = stageRef.current;
+    if (!previewEl || !stage) return;
+
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+      setSelectionMenu((prev) => (prev?.origin === 'preview' ? null : prev));
+      return;
+    }
+
+    const raw = sel.toString().trim();
+    if (raw.length < 2) {
+      setSelectionMenu((prev) => (prev?.origin === 'preview' ? null : prev));
+      return;
+    }
+
+    const range = sel.getRangeAt(0);
+    if (!previewEl.contains(range.commonAncestorContainer)) {
+      return;
+    }
+
+    const rangeRect = range.getBoundingClientRect();
+    const stageRect = stage.getBoundingClientRect();
+    const anchor =
+      rangeRect.width === 0 && rangeRect.height === 0
+        ? {
+            left: stageRect.left + stageRect.width / 2 - 20,
+            top: stageRect.top + 48,
+            bottom: stageRect.top + 68,
+            width: 40,
+          }
+        : {
+            left: rangeRect.left,
+            top: rangeRect.top,
+            bottom: rangeRect.bottom,
+            width: rangeRect.width,
+          };
+
+    const pos = computeFloatingBarPosition(anchor, stageRect, {
+      width: 390,
+      height: 38,
+    });
+
+    setSelectionMenu({
+      origin: 'preview',
+      text: raw,
+      selectionStart: 0,
+      selectionEnd: 0,
+      x: pos.x,
+      y: pos.y,
+      placement: pos.placement,
+    });
+  };
+
+  const handleTurnSelectionIntoTask = () => {
+    if (!selectionMenu) return;
+
+    if (selectionMenu.origin === 'editor') {
+      const converted = convertRangeInMarkdownToTasks(
+        activeNote.content,
+        selectionMenu.selectionStart,
+        selectionMenu.selectionEnd
+      );
+      updateActiveNote({ content: converted.content });
+      setSelectionMenu(null);
+      showActionNotice(
+        converted.tasksCreated > 1
+          ? `Converted ${converted.tasksCreated} lines into tasks`
+          : 'Converted selection into task'
+      );
+      window.requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(converted.nextSelectionStart, converted.nextSelectionEnd);
+      });
+      return;
+    }
+
+    const previewResult = convertPreviewSelectionToTasksInMarkdown(
+      activeNote.content,
+      selectionMenu.text
+    );
+    updateActiveNote({ content: previewResult.content });
+    try {
+      window.getSelection()?.removeAllRanges();
+    } catch {
+      /* ignore */
+    }
+    setSelectionMenu(null);
+    showActionNotice(
+      previewResult.tasksCreated > 1
+        ? `Converted ${previewResult.tasksCreated} items into tasks`
+        : 'Converted selection into task'
+    );
+  };
+
+  const handleExtractSelectionToNote = () => {
+    if (!selectionMenu) return;
+    const body = selectionMenu.text.trim();
+    if (!body) return;
+    const fresh = createScratchpadNote({
+      title: deriveNoteTitleFromSelection(body, 'Extracted note'),
+      content: body,
+    });
+    setState((prev) => ({
+      notes: [fresh, ...prev.notes],
+      activeNoteId: fresh.id,
+    }));
+    setSelectionMenu(null);
+    showActionNotice('Created new note from selection');
   };
 
   const insertDivider = () => {
@@ -897,14 +1120,119 @@ export function ScratchpadApp() {
         )}
 
         {/* Editor / Split / Preview Stage */}
-        <div className={`sp-stage mode-${mode}`}>
+        <div
+          ref={stageRef}
+          className={`sp-stage mode-${mode}`}
+          onMouseDown={(e) => {
+            if (!(e.target as HTMLElement).closest('.sel-action-bar')) {
+              setSelectionMenu(null);
+            }
+          }}
+        >
+          {selectionMenu && (() => {
+            const trimmedSel = selectionMenu.text.trim();
+            const urlCandidate =
+              !/\s/.test(trimmedSel) ? classifyOmniboxInput(trimmedSel) : null;
+            const isUrl = urlCandidate?.kind === 'url';
+
+            return (
+              <SelectionActionBar
+                x={selectionMenu.x}
+                y={selectionMenu.y}
+                placement={selectionMenu.placement}
+                ariaLabel="Scratchpad selection actions"
+                onDismiss={() => setSelectionMenu(null)}
+                actions={[
+                  ...(isUrl
+                    ? [
+                        {
+                          id: 'open-url-browser',
+                          label: 'Open URL in Browser',
+                          icon: <ExternalLink size={12} />,
+                          primary: true,
+                          title: 'Open selected URL in Nexus Browser',
+                          onSelect: () => {
+                            researchSelectionInBrowser(trimmedSel, {
+                              preferUrlIfValid: true,
+                              openBrowserWindow: true,
+                            });
+                            setSelectionMenu(null);
+                            showActionNotice('Opened URL in Nexus Browser');
+                          },
+                        },
+                      ]
+                    : []),
+                  {
+                    id: 'research-browser',
+                    label: isUrl ? 'Research' : 'Research in Browser',
+                    icon: isUrl ? <Compass size={12} /> : <Sparkles size={12} />,
+                    primary: !isUrl,
+                    title: 'Ask Nexus Browser to research selected text with Gemini + Live Web Search',
+                    onSelect: () => {
+                      researchSelectionInBrowser(trimmedSel, {
+                        engine: 'ai',
+                        preferUrlIfValid: false,
+                        openBrowserWindow: true,
+                      });
+                      setSelectionMenu(null);
+                      showActionNotice('Researching selection in Nexus Browser');
+                    },
+                  },
+                  {
+                    id: 'turn-into-task',
+                    label: 'Turn into Task',
+                    icon: <CheckSquare size={12} />,
+                    title: 'Convert selected text into checklist task item(s) (- [ ])',
+                    onSelect: handleTurnSelectionIntoTask,
+                  },
+                  {
+                    id: 'extract-note',
+                    label: 'New Note',
+                    icon: <Plus size={12} />,
+                    title: 'Create a new Scratchpad note from selected text',
+                    onSelect: handleExtractSelectionToNote,
+                  },
+                  {
+                    id: 'copy-text',
+                    label: 'Copy',
+                    icon: <Copy size={12} />,
+                    title: 'Copy selected text',
+                    onSelect: () => {
+                      navigator.clipboard?.writeText(selectionMenu.text).catch(() => {});
+                      setSelectionMenu(null);
+                      showActionNotice('Copied selection');
+                    },
+                  },
+                ]}
+              />
+            );
+          })()}
+
+          {actionNotice && (
+            <div className="ctx-action-toast" role="status" aria-live="polite">
+              <Check size={12} />
+              <span>{actionNotice}</span>
+            </div>
+          )}
+
           {mode !== 'preview' && (
             <div className="sp-editor-pane">
               <textarea
                 ref={textareaRef}
                 value={activeNote.content}
-                onChange={(e) => updateActiveNote({ content: e.target.value })}
+                onChange={(e) => {
+                  updateActiveNote({ content: e.target.value });
+                  if (selectionMenu) setSelectionMenu(null);
+                }}
                 onKeyDown={handleEditorKeyDown}
+                onMouseUp={(e) => {
+                  const pt = { clientX: e.clientX, clientY: e.clientY };
+                  window.requestAnimationFrame(() => evaluateEditorSelection(pt));
+                }}
+                onKeyUp={() => window.requestAnimationFrame(() => evaluateEditorSelection())}
+                onScroll={() => {
+                  if (selectionMenu?.origin === 'editor') setSelectionMenu(null);
+                }}
                 placeholder="Write in plain text or Markdown… Use '- [ ] ' for interactive tasks."
                 aria-label="Scratchpad note editor"
               />
@@ -912,7 +1240,15 @@ export function ScratchpadApp() {
           )}
 
           {mode !== 'write' && (
-            <div className="sp-preview-pane">
+            <div
+              ref={previewPaneRef}
+              className="sp-preview-pane"
+              onMouseUp={() => window.requestAnimationFrame(evaluatePreviewSelection)}
+              onKeyUp={() => window.requestAnimationFrame(evaluatePreviewSelection)}
+              onScroll={() => {
+                if (selectionMenu?.origin === 'preview') setSelectionMenu(null);
+              }}
+            >
               <MarkdownPreview
                 content={activeNote.content}
                 onToggleTask={handleToggleTaskLine}

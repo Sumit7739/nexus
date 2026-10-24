@@ -13,6 +13,7 @@ import {
   ArrowUpRight,
   Bookmark,
   Check,
+  CheckSquare,
   ChevronLeft,
   ChevronRight,
   Compass,
@@ -24,10 +25,12 @@ import {
   RotateCw,
   Search,
   Sparkles,
+  StickyNote,
   Trash2,
   X,
 } from 'lucide-react';
 import { ShortcutFavicon } from '../components/ShortcutFavicon';
+import { SelectionActionBar } from '../components/SelectionActionBar';
 import {
   BROWSER_NAVIGATE_EVENT,
   BROWSER_SEARCH_ENGINES,
@@ -54,6 +57,13 @@ import {
   saveShortcuts,
   type SavedShortcut,
 } from '../data/shortcuts';
+import {
+  computeFloatingBarPosition,
+  normalizeResearchQuery,
+  requestOpenApp,
+  sendSelectionToScratchpad,
+  type BrowserSelectionSource,
+} from '../data/context-actions';
 import type { SettingsProps } from './AppHost';
 
 /* ── Types ────────────────────────────────────────────────────────────────── */
@@ -513,6 +523,18 @@ export function BrowserApp({ settings }: { settings?: SettingsProps }) {
 
   const handleExternalNavigation = useCallback(
     (req: BrowserNavigationRequest) => {
+      const currentTab = activeTabRef.current;
+      const loc = currentTab.history[currentTab.historyIndex] ?? { kind: 'start' };
+
+      if (req.kind === 'start') {
+        if (loc.kind === 'start') {
+          window.setTimeout(() => startSearchInputRef.current?.focus(), 30);
+        } else {
+          openNewTab({ kind: 'start' }, true);
+        }
+        return;
+      }
+
       const destination: TabLocation =
         req.kind === 'url'
           ? {
@@ -526,8 +548,6 @@ export function BrowserApp({ settings }: { settings?: SettingsProps }) {
               engine: req.engine,
             };
 
-      const currentTab = activeTabRef.current;
-      const loc = currentTab.history[currentTab.historyIndex] ?? { kind: 'start' };
       if (loc.kind === 'start') {
         navigateTab(currentTab.id, destination);
       } else {
@@ -757,6 +777,135 @@ export function BrowserApp({ settings }: { settings?: SettingsProps }) {
       });
     }
   };
+
+  /* ── Context-Aware Text Selection Actions (Browser → Scratchpad / Task / Research) ── */
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const clipTimerRef = useRef<number | null>(null);
+  const [browserSelection, setBrowserSelection] = useState<{
+    text: string;
+    x: number;
+    y: number;
+    placement: 'above' | 'below';
+    source?: BrowserSelectionSource;
+  } | null>(null);
+  const [clipFeedback, setClipFeedback] = useState<string | null>(null);
+
+  const showClipFeedback = useCallback((message: string) => {
+    setClipFeedback(message);
+    if (clipTimerRef.current !== null) {
+      window.clearTimeout(clipTimerRef.current);
+    }
+    clipTimerRef.current = window.setTimeout(() => {
+      setClipFeedback(null);
+      clipTimerRef.current = null;
+    }, 2800);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (clipTimerRef.current !== null) {
+        window.clearTimeout(clipTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    setBrowserSelection(null);
+  }, [activeTab.id, activeTab.historyIndex]);
+
+  const clearDomSelection = () => {
+    try {
+      window.getSelection()?.removeAllRanges();
+    } catch {
+      /* ignore */
+    }
+    setBrowserSelection(null);
+  };
+
+  const evaluateBrowserSelection = useCallback(() => {
+    const container = viewportRef.current;
+    if (!container) return;
+
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+      setBrowserSelection(null);
+      return;
+    }
+
+    const rawText = sel.toString().trim();
+    if (rawText.length < 2) {
+      setBrowserSelection(null);
+      return;
+    }
+
+    const range = sel.getRangeAt(0);
+    const commonNode = range.commonAncestorContainer;
+    if (!container.contains(commonNode)) {
+      setBrowserSelection(null);
+      return;
+    }
+
+    const anchorElement =
+      commonNode.nodeType === Node.ELEMENT_NODE
+        ? (commonNode as HTMLElement)
+        : commonNode.parentElement;
+
+    if (
+      anchorElement?.closest('input, textarea, button, select, .sel-action-bar, .ctx-action-toast')
+    ) {
+      return;
+    }
+
+    let source: BrowserSelectionSource | undefined;
+    const serpCard = anchorElement?.closest<HTMLElement>('[data-source-url]');
+    if (serpCard) {
+      source = {
+        url: serpCard.dataset.sourceUrl,
+        title: serpCard.dataset.sourceTitle,
+        query: currentLoc.kind === 'search' ? currentLoc.query : undefined,
+      };
+    } else if (currentLoc.kind === 'search') {
+      source = {
+        query: currentLoc.query,
+        title: `Browser research: ${currentLoc.query}`,
+      };
+    } else if (currentLoc.kind === 'url') {
+      source = {
+        url: currentLoc.url,
+        title: currentLoc.title,
+      };
+    }
+
+    const rangeRect = range.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    const anchorRect =
+      rangeRect.width === 0 && rangeRect.height === 0
+        ? {
+            left: containerRect.left + containerRect.width / 2 - 20,
+            top: containerRect.top + 48,
+            bottom: containerRect.top + 68,
+            width: 40,
+          }
+        : {
+            left: rangeRect.left,
+            top: rangeRect.top,
+            bottom: rangeRect.bottom,
+            width: rangeRect.width,
+          };
+
+    const pos = computeFloatingBarPosition(anchorRect, containerRect, {
+      width: 430,
+      height: 38,
+    });
+
+    setBrowserSelection({
+      text: rawText,
+      x: pos.x,
+      y: pos.y,
+      placement: pos.placement,
+      source,
+    });
+  }, [currentLoc]);
 
   return (
     <div className="nx-browser">
@@ -1056,7 +1205,131 @@ export function BrowserApp({ settings }: { settings?: SettingsProps }) {
       )}
 
       {/* ── 4. BROWSER VIEWPORT ── */}
-      <div className="nxb-viewport">
+      <div
+        ref={viewportRef}
+        className="nxb-viewport"
+        onMouseUp={() => window.requestAnimationFrame(evaluateBrowserSelection)}
+        onKeyUp={() => window.requestAnimationFrame(evaluateBrowserSelection)}
+        onMouseDown={(e) => {
+          if (!(e.target as HTMLElement).closest('.sel-action-bar')) {
+            setBrowserSelection(null);
+          }
+        }}
+        onScrollCapture={() => {
+          if (browserSelection) setBrowserSelection(null);
+        }}
+      >
+        {browserSelection && (
+          <SelectionActionBar
+            x={browserSelection.x}
+            y={browserSelection.y}
+            placement={browserSelection.placement}
+            ariaLabel="Browser selection actions"
+            onDismiss={() => setBrowserSelection(null)}
+            actions={[
+              {
+                id: 'send-scratchpad',
+                label: 'Send to Scratchpad',
+                icon: <StickyNote size={12} />,
+                primary: true,
+                title: 'Append selected text with source attribution to active Scratchpad note',
+                onSelect: () => {
+                  const res = sendSelectionToScratchpad({
+                    text: browserSelection.text,
+                    mode: 'append-note',
+                    source: browserSelection.source,
+                    openScratchpad: true,
+                  });
+                  clearDomSelection();
+                  if (res) {
+                    showClipFeedback('Sent selection to Scratchpad');
+                  }
+                },
+              },
+              {
+                id: 'add-task',
+                label: 'Add as Task',
+                icon: <CheckSquare size={12} />,
+                title: 'Turn selected text into a checklist item in Scratchpad',
+                onSelect: () => {
+                  const res = sendSelectionToScratchpad({
+                    text: browserSelection.text,
+                    mode: 'append-task',
+                    source: browserSelection.source,
+                    openScratchpad: true,
+                  });
+                  clearDomSelection();
+                  if (res) {
+                    showClipFeedback(
+                      res.addedTasks > 1
+                        ? `Added ${res.addedTasks} tasks to Scratchpad`
+                        : 'Added checklist task to Scratchpad'
+                    );
+                  }
+                },
+              },
+              {
+                id: 'new-note',
+                label: 'New Note',
+                icon: <Plus size={12} />,
+                title: 'Create a new Scratchpad note from selection',
+                onSelect: () => {
+                  const res = sendSelectionToScratchpad({
+                    text: browserSelection.text,
+                    mode: 'new-note',
+                    source: browserSelection.source,
+                    openScratchpad: true,
+                  });
+                  clearDomSelection();
+                  if (res) {
+                    showClipFeedback('Created new note in Scratchpad');
+                  }
+                },
+              },
+              {
+                id: 'research-selection',
+                label: 'Research',
+                icon: <Sparkles size={12} />,
+                title: 'Research selected text in a new Browser tab',
+                onSelect: () => {
+                  const nextQuery = normalizeResearchQuery(browserSelection.text);
+                  clearDomSelection();
+                  if (nextQuery) {
+                    openNewTab({ kind: 'search', query: nextQuery, engine: 'ai' }, true);
+                  }
+                },
+              },
+              {
+                id: 'copy-selection',
+                label: 'Copy',
+                icon: <Copy size={12} />,
+                title: 'Copy selected text',
+                onSelect: () => {
+                  navigator.clipboard?.writeText(browserSelection.text).catch(() => {});
+                  clearDomSelection();
+                  showClipFeedback('Copied selection');
+                },
+              },
+            ]}
+          />
+        )}
+
+        {clipFeedback && (
+          <div className="ctx-action-toast" role="status" aria-live="polite">
+            <Check size={12} />
+            <span>{clipFeedback}</span>
+            <button
+              type="button"
+              className="ctx-action-toast-link"
+              onClick={() => {
+                setClipFeedback(null);
+                requestOpenApp('notes', { preferExisting: true });
+              }}
+            >
+              Scratchpad
+            </button>
+          </div>
+        )}
         {/* ══ VIEWPORT A: START PAGE ("NEW TAB") ══ */}
         {currentLoc.kind === 'start' && (
           <div className="nxb-start">
@@ -1550,6 +1823,27 @@ export function BrowserApp({ settings }: { settings?: SettingsProps }) {
                             <Sparkles size={13} />
                             <strong>AI Overview</strong>
                             <span>Synthesized with Gemini from live web results</span>
+                            <button
+                              type="button"
+                              className="nxb-mini-btn nxb-overview-clip-btn"
+                              onClick={() => {
+                                const res = sendSelectionToScratchpad({
+                                  text: activeTab.searchState.answer,
+                                  mode: 'append-note',
+                                  source: {
+                                    query: currentLoc.query,
+                                    title: `AI Overview: ${currentLoc.query}`,
+                                  },
+                                  openScratchpad: true,
+                                });
+                                if (res) {
+                                  showClipFeedback('Saved AI Overview to Scratchpad');
+                                }
+                              }}
+                              title="Send full AI Overview to Scratchpad"
+                            >
+                              <StickyNote size={11} /> Save to Scratchpad
+                            </button>
                           </div>
                           <SearchMarkdown markdown={activeTab.searchState.answer} />
                         </section>
@@ -1563,13 +1857,18 @@ export function BrowserApp({ settings }: { settings?: SettingsProps }) {
                               Web results · {activeTab.searchState.sources.length}
                             </strong>
                             <span className="nxb-muted-note">
-                              Click title for new browser tab, or open inside workspace tab
+                              Select any text for Scratchpad or task actions
                             </span>
                           </div>
 
                           <div className="nxb-serp-list">
                             {activeTab.searchState.sources.map(src => (
-                              <article key={src.url} className="nxb-serp-item">
+                              <article
+                                key={src.url}
+                                className="nxb-serp-item"
+                                data-source-url={src.url}
+                                data-source-title={src.title}
+                              >
                                 <div className="nxb-serp-top">
                                   <div className="nxb-serp-site">
                                     <span className="nxb-source-favicon">

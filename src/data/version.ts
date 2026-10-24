@@ -8,7 +8,7 @@
  *   (enforced automatically by `tests/version.test.ts`).
  */
 
-export const NEXUS_VERSION = '1.1.0';
+export const NEXUS_VERSION = '1.3.0';
 export const NEXUS_VERSION_TAG = `v${NEXUS_VERSION}`;
 
 export type ChangelogCategory = 'added' | 'updated' | 'fixed' | 'removed';
@@ -28,6 +28,58 @@ export interface ChangelogRelease {
 }
 
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
+  {
+    version: '1.3.0',
+    title: 'Desktop Context Menu, Quick Note Creation & Menu Layering Fixes',
+    date: 'October 2026',
+    summary:
+      'Resolved App Launcher and desktop menu z-index collisions, added viewport-clamped menu positioning, and upgraded the Desktop, Launcher, Desktop Icon, and Dock menus with one-click Note & Checklist creation, new Browser tab handoff, 50/50 window tiling, and quick workspace controls.',
+    groups: [
+      {
+        kind: 'added',
+        label: 'Added',
+        items: [
+          'Direct "New note", "New checklist", "New browser tab", and "Add web shortcut" quick-create actions in the Desktop right-click menu.',
+          'Contextual Desktop window & workspace actions: "Tile windows side by side" (50/50 split preserving natural left-to-right order), "Show desktop" / "Restore windows", "Manage widgets", theme toggle, quote rotation, "Workspace settings", and "Lock workspace".',
+          'Contextual app quick actions ("New note", "New checklist", "New search tab", "Arrange desktop") across App Launcher, Desktop Icon, and Dock right-click menus, plus quick Note, Theme, Settings, and Lock controls in the App Launcher footer.',
+        ],
+      },
+      {
+        kind: 'fixed',
+        label: 'Fixed',
+        items: [
+          'Fixed App Launcher per-app dropdown z-index bug where neighboring grid/list app tiles painted over open ".l-pin-menu" popovers, and added column-aware alignment and row-aware upward flipping.',
+          'Moved Desktop and Desktop Icon context menus out of ".desktop-canvas" overflow clipping and established a unified top-level z-index hierarchy across windows, dock, tray, menus, App Launcher, Spotlight, Changelog, and Passcode modals.',
+        ],
+      },
+    ],
+  },
+  {
+    version: '1.2.0',
+    title: 'Context-Aware Selection Actions Across Browser & Scratchpad',
+    date: 'October 2026',
+    summary:
+      'Introduced context-aware floating selection toolbars connecting Nexus Browser and Scratchpad — clip web paragraphs with source attribution, research any note passage with Gemini + Live Web Search, and turn selected text directly into interactive checklist tasks.',
+    groups: [
+      {
+        kind: 'added',
+        label: 'Added',
+        items: [
+          'Browser → Scratchpad selection actions: highlight any paragraph or search snippet in Nexus Browser to append it to your active note with automatic source attribution, create a new note, or capture it directly as a checklist task.',
+          'Scratchpad → Browser research handoff: select text in Scratchpad (in Write, Split, or Preview mode) to research it with Gemini AI + Live Web Search or open selected URLs directly in Nexus Browser.',
+          'One-click "Turn into Task" conversion: transform single lines, bullet lists, or multi-line passages in Scratchpad into interactive "- [ ] " checklist items in-place.',
+          'One-click "Save to Scratchpad" button on Gemini AI Overview syntheses and live cross-window handoff that automatically opens or focuses the target app.',
+        ],
+      },
+      {
+        kind: 'updated',
+        label: 'Updated',
+        items: [
+          'Scratchpad Markdown Task toolbar button now converts multi-line text selections into checklist items in a single click.',
+        ],
+      },
+    ],
+  },
   {
     version: '1.1.0',
     title: 'Spotlight Command Palette & Instant Workspace Search',

@@ -1051,6 +1051,7 @@
 
 /* ── Stage (Write / Split / Preview) ── */
 .sp-stage {
+  position: relative;
   display: grid;
   flex: 1 1 0;
   min-width: 0;
@@ -3677,6 +3678,7 @@
 
 /* ── 4. Browser Viewport ── */
 .nxb-viewport {
+  position: relative;
   display: flex;
   flex: 1 1 0;
   flex-direction: column;
@@ -4665,4 +4667,146 @@
   flex-direction: column;
   gap: 7px;
 }
+
+/* ── v1.2.0: Context-Aware Selection Action Bar & Cross-App Toast ── */
+.sel-action-bar {
+  position: absolute;
+  z-index: 42;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 16px);
+  padding: 4px;
+  overflow-x: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  background: var(--paper);
+  box-shadow: var(--popup-shadow);
+  animation: sel-bar-enter 0.14s var(--ease-out) both;
+}
+
+@keyframes sel-bar-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.sel-action-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.sel-action-sep {
+  width: 1px;
+  height: 15px;
+  margin: 0 2px;
+  background: var(--rule);
+  flex-shrink: 0;
+}
+
+.sel-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-2);
+  font: 500 11.5px var(--font-body);
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background var(--t-xs), border-color var(--t-xs), color var(--t-xs);
+}
+
+.sel-action-btn:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.sel-action-btn.is-primary {
+  border-color: color-mix(in srgb, var(--pill-lavender-ink) 26%, var(--rule));
+  background: var(--pill-lavender-bg);
+  color: var(--pill-lavender-ink);
+  font-weight: 600;
+}
+
+.sel-action-btn.is-primary:hover {
+  border-color: color-mix(in srgb, var(--pill-lavender-ink) 42%, var(--rule));
+  filter: brightness(0.98);
+}
+
+.sel-action-icon {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.nxb-overview-clip-btn {
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.nxb-overview-head span + .nxb-overview-clip-btn {
+  margin-left: 10px;
+}
+
+.ctx-action-toast {
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  z-index: 38;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 11px;
+  border: 1px solid color-mix(in srgb, var(--pill-sage-ink) 28%, var(--rule));
+  border-radius: var(--r-sm);
+  background: var(--paper);
+  box-shadow: var(--sh-md);
+  color: var(--ink);
+  font: 500 11.5px var(--font-body);
+  white-space: nowrap;
+  animation: sel-bar-enter 0.14s var(--ease-out) both;
+}
+
+.ctx-action-toast svg {
+  color: var(--pill-sage-ink);
+  flex-shrink: 0;
+}
+
+.ctx-action-toast-link {
+  padding: 2px 7px;
+  margin-left: 2px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--paper-2);
+  color: var(--ink);
+  font: 600 10.5px var(--font-body);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--t-xs), border-color var(--t-xs);
+}
+
+.ctx-action-toast-link:hover {
+  border-color: var(--ink-5);
+  background: var(--paper-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sel-action-bar,
+  .ctx-action-toast {
+    animation: none;
+  }
+}
+
 
