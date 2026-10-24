@@ -27,7 +27,8 @@ function buildDocument(widget: WidgetDefinition, theme: 'light' | 'dark') {
   const savedState = JSON.stringify(readWidgetState(widget.id)).replace(/</g, '\\u003c');
   const initialLocal = JSON.stringify(readWidgetLocal(widget.id)).replace(/</g, '\\u003c');
   const script = widget.source.js.replace(/<\/script/gi, '<\\\\/script');
-  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>${widget.source.css}</style></head><body>${widget.source.html}<script>
+  const safeTheme = theme === 'dark' ? 'dark' : 'light';
+  return `<!doctype html><html data-theme="${safeTheme}"><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>${widget.source.css}</style></head><body data-theme="${safeTheme}">${widget.source.html}<script>
 const NEXUS_DATA = ${payload};
 let NEXUS_STATE = ${savedState};
 let NEXUS_THEME = ${JSON.stringify(theme)};

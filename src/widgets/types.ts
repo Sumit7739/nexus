@@ -18,10 +18,35 @@ export interface WidgetDefinition {
 }
 
 export const DEFAULT_WIDGET_SOURCE: WidgetSource = {
-  html: '<div class="widget"><strong data-time>Loading…</strong><small>Local widget</small></div>',
-  css: '.widget { display: grid; gap: 6px; padding: 16px; color: #e9f0df; font: 14px system-ui; } small { color: #9eaa98; }',
-  js: 'window.addEventListener("nexus:ready", () => {\\n  document.querySelector("[data-time]").textContent = new Date().toLocaleTimeString();\\n});',
-  json: '{}',
+  html: `<div class="widget">
+  <span class="kicker" id="title">Local widget</span>
+  <strong data-time>Loading…</strong>
+</div>`,
+  css: `* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body {
+  display: flex; align-items: center;
+  padding: 18px 20px;
+  background: #f7f5f0; color: #1a1916;
+}
+body[data-theme="dark"] {
+  background: #18160f; color: #f0ede4;
+}
+.widget { display: flex; flex-direction: column; gap: 6px; }
+.kicker { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55; }
+strong { font-family: Georgia, serif; font-style: italic; font-weight: 400; font-size: 28px; font-variant-numeric: tabular-nums; }`,
+  js: `function update() {
+  const el = document.querySelector('[data-time]');
+  if (el) el.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const title = document.getElementById('title');
+  if (title && NEXUS.data.title) title.textContent = NEXUS.data.title;
+}
+
+window.addEventListener('nexus:ready', () => {
+  update();
+  setInterval(update, 10000);
+});`,
+  json: `{\n  "title": "Local widget"\n}`,
 };
 
 export function createWidget(name = 'Untitled widget'): WidgetDefinition {

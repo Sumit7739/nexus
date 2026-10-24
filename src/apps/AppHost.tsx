@@ -1,9 +1,14 @@
-import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
-import { ArrowUpRight, ExternalLink, Globe2, Plus, Search, StickyNote, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import {
+  ArrowUpRight, Check, Copy, Crosshair, Download, ExternalLink,
+  Globe2, Plus, RefreshCw, Search, StickyNote, Trash2, Upload,
+} from 'lucide-react';
 import type { AppId } from '../window-manager/types';
 import type { DesktopMessage } from '../data/messages';
-import type { WidgetDefinition } from '../widgets/types';
+import type { WidgetDefinition, WidgetSource } from '../widgets/types';
 import { createWidget } from '../widgets/types';
+import { WidgetRuntime } from '../widgets/WidgetRuntime';
+import { instantiateTemplate, WIDGET_API_ENTRIES, WIDGET_TEMPLATES } from '../widgets/templates';
 
 const SAVED_APPS_KEY = 'nexus.saved-apps.v1';
 const NOTES_KEY = 'nexus.scratchpad.v1';
@@ -57,6 +62,7 @@ export interface SettingsProps {
   widgets: WidgetDefinition[];
   onWidgetsChange: (widgets: WidgetDefinition[]) => void;
   onPreviewWidget: (widget: WidgetDefinition) => void;
+  onOpenApp?: (appId: AppId) => void;
 }
 
 export function AppHost({ appId, settings }: { appId: AppId; settings?: SettingsProps }) {
@@ -270,11 +276,27 @@ function MessagesEditor({ messages, onChange }: { messages: DesktopMessage[]; on
   );
 }
 
+/* ── Widget Studio ────────────────────────────────────────────────────────── */
+const SOURCE_FILES: { key: keyof WidgetSource; label: string; hint: string }[] = [
+  { key: 'html', label: 'index.html', hint: 'Markup' },
+  { key: 'css',  label: 'style.css',  hint: 'Styles' },
+  { key: 'js',   label: 'script.js',  hint: 'Logic' },
+  { key: 'json', label: 'widget.json', hint: 'Config' },
+];
+
+const VALID_APP_IDS: AppId[] = ['browser', 'youtube', 'notes', 'bookmarks', 'settings', 'widgets'];
+
 function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
-  const [page, setPage] = useState<'collection' | 'editor' | 'api' | 'guides'>('collection');
-  const [editingId, setEditingId] = useState<string | null>(
-    settings.widgets[0]?.id ?? null
+  const [tab, setTab] = useState<'workbench' | 'library' | 'api'>(() =>
+    settings.widgets.length > 0 ? 'workbench' : 'library'
   );
+  const [editingId, setEditingId] = useState<string | null>(settings.widgets[0]?.id ?? null);
+  const [activeFile, setActiveFile] = useState<keyof WidgetSource>('html');
+  const [previewMode, setPreviewMode] = useState<'auto' | 'light' | 'dark'>('auto');
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [importError, setImportError] = useState('');
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!editingId || !settings.widgets.some(w => w.id === editingId)) {
@@ -282,378 +304,133 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
     }
   }, [settings.widgets, editingId]);
 
-  const createAndEdit = () => {
-    const widget = createWidget(`Widget ${settings.widgets.length + 1}`);
-    settings.onWidgetsChange([...settings.widgets, widget]);
-    setEditingId(widget.id);
-    setPage('editor');
-  };
+  useEffect(() => {
+    setConfirmDeleteId(null);
+  }, [editingId, tab]);
 
-  const nav = [
-    { id: 'collection' as const, icon: '▦', title: 'My widgets', subtitle: 'Your collection' },
-    { id: 'editor' as const, icon: '</>', title: 'Editor', subtitle: 'HTML · CSS · JS · JSON' },
-    { id: 'api' as const, icon: '⌘', title: 'Widget API', subtitle: 'Host capabilities' },
-    { id: 'guides' as const, icon: '▤', title: 'Guides', subtitle: 'Patterns and examples' }
-  ];
-
-  return (
-    <div className="widget-studio-app">
-      <header className="widget-studio-app-header">
-        <div>
-          <span className="eyebrow">NEXUS DEVELOPER TOOLS</span>
-          <h2>Widget Studio</h2>
-          <p>Build, inspect, and manage the small apps that make your desktop yours.</p>
-        </div>
-        <div className="widget-studio-app-meta">
-          <span className="studio-status-dot" />
-          Local widget library
-          <strong>{settings.widgets.length}</strong>
-        </div>
-      </header>
-
-      <div className="widget-studio-app-body">
-        <aside className="widget-studio-sidebar">
-          <div className="studio-side-label">WORKSPACE</div>
-
-          {nav.map(item => (
-            <button
-              key={item.id}
-              type="button"
-              className={`studio-side-item ${page === item.id ? 'active' : ''}`}
-              onClick={() => setPage(item.id)}
-              aria-current={page === item.id ? 'page' : undefined}
-            >
-              <span className="studio-side-icon">{item.icon}</span>
-              <div>
-                <strong>{item.title}</strong>
-                <small>{item.subtitle}</small>
-              </div>
-              {item.id === 'collection' && <b>{settings.widgets.length}</b>}
-            </button>
-          ))}
-
-          <div className="studio-side-note">
-            <strong>Sandboxed by design</strong>
-            <p>
-              Widgets run in isolated iframes. Host capabilities are available
-              through the documented <code>window.NEXUS</code> API.
-            </p>
-          </div>
-        </aside>
-
-        <main className="widget-studio-main">
-          {page === 'collection' && (
-            <WidgetCollection
-              widgets={settings.widgets}
-              onChange={settings.onWidgetsChange}
-              onCreate={createAndEdit}
-              onEdit={id => {
-                setEditingId(id);
-                setPage('editor');
-              }}
-            />
-          )}
-
-          {page === 'editor' && (
-            <WidgetStudio
-              widgets={settings.widgets}
-              onChange={settings.onWidgetsChange}
-              onPreview={settings.onPreviewWidget}
-              editingId={editingId}
-              onEditingIdChange={setEditingId}
-            />
-          )}
-
-          {page === 'api' && (
-            <div className="studio-info-page">
-              <span className="eyebrow">REFERENCE</span>
-              <h2>Widget API</h2>
-              <p>Use the host bridge to interact with Nexus.</p>
-
-              <div className="studio-info-grid">
-                <article>
-                  <h3>Read theme</h3>
-                  <code>await window.NEXUS.getTheme()</code>
-                  <p>Read the current workspace theme.</p>
-                </article>
-                <article>
-                  <h3>Change theme</h3>
-                  <code>await window.NEXUS.setTheme('dark')</code>
-                  <p>Request a workspace theme change. Use only if the runtime implements this method.</p>
-                </article>
-                <article>
-                  <h3>Local storage</h3>
-                  <code>await window.NEXUS.getLocal('key')</code>
-                  <p>Use getLocal, setLocal, getAllLocal, and removeLocal for widget-scoped storage.</p>
-                </article>
-                <article>
-                  <h3>Events</h3>
-                  <code>nexus:ready · nexus:theme · nexus:local</code>
-                  <p>Listen for initialization and host updates.</p>
-                </article>
-                <article>
-                  <h3>Navigation</h3>
-                  <code>window.NEXUS.openUrl(url)</code>
-                  <p>Ask the host to open a trusted HTTP or HTTPS destination.</p>
-                </article>
-              </div>
-            </div>
-          )}
-
-          {page === 'guides' && (
-            <div className="studio-info-page">
-              <span className="eyebrow">DOCUMENTATION</span>
-              <h2>Widget guides</h2>
-              <p>Build small, resilient widgets that fit naturally into the Nexus desktop.</p>
-
-              <div className="studio-guide-list">
-                <article>
-                  <h3>01 — Structure</h3>
-                  <p>Keep markup, styling, behavior, and metadata in their respective files.</p>
-                </article>
-                <article>
-                  <h3>02 — Initialization</h3>
-                  <p>Listen for the ready event and avoid registering duplicate listeners.</p>
-                </article>
-                <article>
-                  <h3>03 — Persistence</h3>
-                  <p>Use the host-backed storage API and handle failed requests gracefully.</p>
-                </article>
-                <article>
-                  <h3>04 — Theme support</h3>
-                  <p>Read the current theme on startup and respond to theme updates.</p>
-                </article>
-              </div>
-            </div>
-          )}
-        </main>
-      </div>
-    </div>
+  const selected = useMemo(
+    () => settings.widgets.find(w => w.id === editingId) ?? null,
+    [settings.widgets, editingId]
   );
-}
 
-function WidgetCollection({
-  widgets,
-  onChange,
-  onCreate,
-  onEdit
-}: {
-  widgets: WidgetDefinition[];
-  onChange: (widgets: WidgetDefinition[]) => void;
-  onCreate: () => void;
-  onEdit: (id: string) => void;
-}) {
-  const toggleWidget = (id: string, visible: boolean) => {
-    onChange(
-      widgets.map(widget =>
-        widget.id === id
-          ? { ...widget, visible, updatedAt: Date.now() }
-          : widget
-      )
+  /* Debounce live preview updates while typing in the code editor */
+  const [debouncedWidget, setDebouncedWidget] = useState<WidgetDefinition | null>(selected);
+  useEffect(() => {
+    if (!selected) {
+      setDebouncedWidget(null);
+      return;
+    }
+    const timer = window.setTimeout(() => setDebouncedWidget(selected), 220);
+    return () => window.clearTimeout(timer);
+  }, [selected]);
+
+  const effectivePreviewTheme: 'light' | 'dark' =
+    previewMode === 'auto' ? settings.theme : previewMode;
+
+  const jsonValid = useMemo(() => {
+    if (!selected) return true;
+    try {
+      const parsed: unknown = JSON.parse(selected.source.json);
+      return Boolean(parsed && typeof parsed === 'object' && !Array.isArray(parsed));
+    } catch {
+      return false;
+    }
+  }, [selected]);
+
+  const updateSelected = (patch: Partial<WidgetDefinition>) => {
+    if (!selected) return;
+    settings.onWidgetsChange(
+      settings.widgets.map(w => (w.id === selected.id ? { ...w, ...patch, updatedAt: Date.now() } : w))
     );
   };
 
-  return (
-    <section className="studio-collection-page">
-      <div className="studio-page-heading">
-        <div>
-          <span className="eyebrow">YOUR LIBRARY</span>
-          <h2>My widgets</h2>
-          <p>Manage your widgets and control which ones appear on the desktop.</p>
-        </div>
-
-        <button className="primary-btn" onClick={onCreate}>
-          <Plus size={15} /> New widget
-        </button>
-      </div>
-
-      {widgets.length === 0 ? (
-        <div className="studio-collection-empty">
-          <h3>Your widget library is empty</h3>
-          <p>Create a widget to start building your own desktop tools.</p>
-          <button className="primary-btn" onClick={onCreate}>
-            <Plus size={15} /> Create widget
-          </button>
-        </div>
-      ) : (
-        <div className="studio-widget-cards">
-          {widgets.map(widget => (
-            <article className="studio-widget-card" key={widget.id}>
-              <div className="studio-widget-card-icon">▦</div>
-
-              <div className="studio-widget-card-content">
-                <h3>{widget.name}</h3>
-                <p>
-                  {widget.bounds.width} × {widget.bounds.height} px
-                  {' · '}
-                  Updated {new Date(widget.updatedAt).toLocaleDateString()}
-                </p>
-
-                <span
-                  className={`studio-visibility-state ${widget.visible ? 'is-visible' : 'is-hidden'
-                    }`}
-                >
-                  <i />
-                  {widget.visible ? 'Visible on desktop' : 'Hidden from desktop'}
-                </span>
-              </div>
-
-              <label className="studio-visibility-toggle">
-                <input
-                  type="checkbox"
-                  checked={widget.visible}
-                  onChange={event =>
-                    toggleWidget(widget.id, event.target.checked)
-                  }
-                  aria-label={`${widget.visible ? 'Disable' : 'Enable'} ${widget.name}`}
-                />
-                <span className="studio-toggle-track" />
-                <span>{widget.visible ? 'Enabled' : 'Disabled'}</span>
-              </label>
-
-              <button
-                className="settings-action"
-                onClick={() => onEdit(widget.id)}
-              >
-                Edit widget
-              </button>
-            </article>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function WidgetStudio({
-  widgets,
-  onChange,
-  onPreview,
-  editingId,
-  onEditingIdChange
-}: {
-  widgets: WidgetDefinition[];
-  onChange: (widgets: WidgetDefinition[]) => void;
-  onPreview: (widget: WidgetDefinition) => void;
-  editingId: string | null;
-  onEditingIdChange: (id: string | null) => void;
-}) {
-  const [activeFile, setActiveFile] =
-    useState<keyof WidgetDefinition['source']>('html');
-
-  const selected =
-    widgets.find(widget => widget.id === editingId) ?? null;
-
-  const files: {
-    key: keyof WidgetDefinition['source'];
-    label: string;
-    icon: string;
-    description: string;
-  }[] = [
-      { key: 'html', label: 'index.html', icon: '◇', description: 'Markup and structure' },
-      { key: 'css', label: 'style.css', icon: '◈', description: 'Visual styling' },
-      { key: 'js', label: 'script.js', icon: '⌘', description: 'Interactions and logic' },
-      { key: 'json', label: 'widget.json', icon: '{}', description: 'Metadata and settings' }
-    ];
-
-  const update = (patch: Partial<WidgetDefinition>) => {
+  const updateSource = (key: keyof WidgetSource, value: string) => {
     if (!selected) return;
-
-    onChange(
-      widgets.map(widget =>
-        widget.id === selected.id
-          ? { ...widget, ...patch, updatedAt: Date.now() }
-          : widget
-      )
-    );
+    updateSelected({ source: { ...selected.source, [key]: value } });
   };
 
-  const updateSource = (
-    key: keyof WidgetDefinition['source'],
-    value: string
-  ) => {
-    if (!selected) return;
-    update({ source: { ...selected.source, [key]: value } });
-  };
-
-  const updateBound = (
-    key: keyof WidgetDefinition['bounds'],
-    value: number
-  ) => {
+  const updateBound = (key: keyof WidgetDefinition['bounds'], value: number) => {
     if (!selected || !Number.isFinite(value)) return;
-
-    const minimum = key === 'width' ? 160 : key === 'height' ? 100 : 0;
-
-    update({
-      bounds: {
-        ...selected.bounds,
-        [key]: Math.max(minimum, Math.round(value))
-      }
+    const min = key === 'width' ? 160 : key === 'height' ? 100 : 0;
+    updateSelected({
+      bounds: { ...selected.bounds, [key]: Math.max(min, Math.round(value)) },
     });
   };
 
-  const adjustBound = (
-    key: keyof WidgetDefinition['bounds'],
-    amount: number
-  ) => {
-    if (selected) updateBound(key, selected.bounds[key] + amount);
+  const centerOnDesktop = () => {
+    if (!selected) return;
+    const x = Math.max(24, Math.round((window.innerWidth - selected.bounds.width) / 2));
+    const y = Math.max(24, Math.round((window.innerHeight - 88 - selected.bounds.height) / 2));
+    updateSelected({ bounds: { ...selected.bounds, x, y } });
   };
 
-  const add = () => {
-    const widget = createWidget(`Widget ${widgets.length + 1}`);
-    onChange([...widgets, widget]);
-    onEditingIdChange(widget.id);
+  const createBlank = () => {
+    const widget = createWidget(`Widget ${settings.widgets.length + 1}`);
+    settings.onWidgetsChange([...settings.widgets, widget]);
+    setEditingId(widget.id);
     setActiveFile('html');
+    setTab('workbench');
   };
 
-  const duplicate = () => {
-    if (!selected) return;
+  const addFromTemplate = (templateId: string) => {
+    const tpl = WIDGET_TEMPLATES.find(t => t.id === templateId);
+    if (!tpl) return;
+    const widget = instantiateTemplate(tpl, settings.widgets.length);
+    settings.onWidgetsChange([...settings.widgets, widget]);
+    setEditingId(widget.id);
+    setActiveFile('html');
+    setTab('workbench');
+  };
 
+  const duplicateWidget = (target: WidgetDefinition) => {
     const copy: WidgetDefinition = {
-      ...selected,
+      ...target,
       id: `widget-${crypto.randomUUID()}`,
-      name: `${selected.name} copy`,
-      source: { ...selected.source },
-      updatedAt: Date.now()
+      name: `${target.name} copy`,
+      source: { ...target.source },
+      bounds: { ...target.bounds, x: target.bounds.x + 24, y: target.bounds.y + 24 },
+      updatedAt: Date.now(),
     };
-
-    onChange([...widgets, copy]);
-    onEditingIdChange(copy.id);
+    settings.onWidgetsChange([...settings.widgets, copy]);
+    setEditingId(copy.id);
+    setTab('workbench');
   };
 
-  const remove = () => {
-    if (!selected || !window.confirm(`Delete ${selected.name}?`)) return;
-
-    const remaining = widgets.filter(widget => widget.id !== selected.id);
-    onChange(remaining);
-    onEditingIdChange(remaining[0]?.id ?? null);
+  const deleteWidget = (id: string) => {
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      return;
+    }
+    const remaining = settings.widgets.filter(w => w.id !== id);
+    settings.onWidgetsChange(remaining);
+    if (editingId === id) {
+      setEditingId(remaining[0]?.id ?? null);
+    }
+    setConfirmDeleteId(null);
   };
 
-  const exportWidget = () => {
-    if (!selected) return;
-
-    const blob = new Blob(
-      [JSON.stringify(selected, null, 2)],
-      { type: 'application/json' }
+  const toggleVisible = (id: string) => {
+    settings.onWidgetsChange(
+      settings.widgets.map(w => (w.id === id ? { ...w, visible: !w.visible, updatedAt: Date.now() } : w))
     );
+  };
 
+  const exportWidget = (target: WidgetDefinition) => {
+    const blob = new Blob([JSON.stringify(target, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-
     link.href = url;
-    link.download = `${selected.name.replace(/\s+/g, '-').toLowerCase()}.json`;
+    link.download = `${target.name.replace(/\s+/g, '-').toLowerCase() || 'widget'}.json`;
     link.click();
-
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const importWidget = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
     try {
+      setImportError('');
       const imported = JSON.parse(await file.text()) as WidgetDefinition;
-
       if (
         imported.version !== 1 ||
         !imported.source ||
@@ -664,183 +441,532 @@ function WidgetStudio({
       ) {
         throw new Error('Unsupported widget format');
       }
-
       const widget: WidgetDefinition = {
         ...imported,
         id: `widget-${crypto.randomUUID()}`,
-        updatedAt: Date.now()
+        bounds: {
+          x: Number.isFinite(imported.bounds?.x) ? imported.bounds.x : 420,
+          y: Number.isFinite(imported.bounds?.y) ? imported.bounds.y : 110,
+          width: Math.max(160, Number(imported.bounds?.width) || 260),
+          height: Math.max(100, Number(imported.bounds?.height) || 150),
+        },
+        visible: imported.visible !== false,
+        updatedAt: Date.now(),
       };
-
-      onChange([...widgets, widget]);
-      onEditingIdChange(widget.id);
+      settings.onWidgetsChange([...settings.widgets, widget]);
+      setEditingId(widget.id);
       setActiveFile('html');
+      setTab('workbench');
     } catch {
-      window.alert('Could not import this widget. Check the JSON file format.');
+      setImportError('Could not import JSON. Verify it is an exported Nexus widget file.');
     } finally {
       event.target.value = '';
     }
   };
 
-  return (
-    <div className="widget-studio-editor-page">
-      <div className="studio-editor-heading">
-        <div>
-          <span className="eyebrow">SOURCE WORKSPACE</span>
-          <h2>Editor</h2>
-          <p>Edit each source file independently.</p>
-        </div>
+  const handleEditorKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Tab' && selected) {
+      event.preventDefault();
+      const target = event.currentTarget;
+      const start = target.selectionStart;
+      const end = target.selectionEnd;
+      const current = selected.source[activeFile];
+      const next = `${current.slice(0, start)}  ${current.slice(end)}`;
+      updateSource(activeFile, next);
+      requestAnimationFrame(() => {
+        target.selectionStart = start + 2;
+        target.selectionEnd = start + 2;
+      });
+    }
+  };
 
-        <div className="studio-editor-actions">
-          <button className="settings-action" onClick={add}>
-            <Plus size={14} /> New
+  const formatJson = () => {
+    if (!selected) return;
+    try {
+      const pretty = JSON.stringify(JSON.parse(selected.source.json), null, 2);
+      updateSource('json', pretty);
+    } catch {
+      /* Leave source untouched when JSON is invalid */
+    }
+  };
+
+  const copySnippet = async (id: string, snippet: string) => {
+    try {
+      await navigator.clipboard.writeText(snippet);
+      setCopiedId(id);
+      window.setTimeout(() => setCopiedId(curr => (curr === id ? null : curr)), 1600);
+    } catch {
+      /* Clipboard may be restricted in some contexts */
+    }
+  };
+
+  const appendSnippetToWidget = (snippet: string) => {
+    if (!selected) return;
+    const prefix = selected.source.js.trim() ? `${selected.source.js.trimEnd()}\n\n` : '';
+    updateSource('js', `${prefix}${snippet}\n`);
+    setActiveFile('js');
+    setTab('workbench');
+  };
+
+  /* Compute preview scale so oversized widgets fit cleanly inside the inspector stage */
+  const previewScale = useMemo(() => {
+    if (!selected) return 1;
+    const maxW = 340;
+    const maxH = 220;
+    return Math.min(1, maxW / selected.bounds.width, maxH / selected.bounds.height);
+  }, [selected]);
+
+  const lineCount = selected ? selected.source[activeFile].split('\n').length : 0;
+
+  return (
+    <div className="ws-shell">
+      {/* ── Top Bar ── */}
+      <header className="ws-topbar">
+        <nav className="ws-nav" aria-label="Widget Studio views">
+          <button
+            type="button"
+            className={`ws-nav-tab ${tab === 'workbench' ? 'is-active' : ''}`}
+            onClick={() => setTab('workbench')}
+          >
+            Workbench
           </button>
-          <button className="settings-action" onClick={duplicate} disabled={!selected}>
-            Duplicate
+          <button
+            type="button"
+            className={`ws-nav-tab ${tab === 'library' ? 'is-active' : ''}`}
+            onClick={() => setTab('library')}
+          >
+            Library · {settings.widgets.length}
           </button>
-          <button className="settings-action" onClick={exportWidget} disabled={!selected}>
-            Export
+          <button
+            type="button"
+            className={`ws-nav-tab ${tab === 'api' ? 'is-active' : ''}`}
+            onClick={() => setTab('api')}
+          >
+            API Reference
           </button>
-          <label className="settings-action widget-import">
-            Import
+        </nav>
+
+        {tab === 'workbench' && selected && (
+          <div className="ws-active-widget">
+            {settings.widgets.length > 1 && (
+              <select
+                aria-label="Select widget"
+                value={selected.id}
+                onChange={e => setEditingId(e.target.value)}
+              >
+                {settings.widgets.map(w => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+            )}
+            <input
+              className="ws-title-input"
+              value={selected.name}
+              onChange={e => updateSelected({ name: e.target.value })}
+              aria-label="Widget name"
+              placeholder="Widget name"
+            />
+          </div>
+        )}
+
+        <div className="ws-topbar-actions">
+          <label className="secondary-btn widget-import">
+            <Upload size={13} /> Import
             <input type="file" accept="application/json,.json" onChange={importWidget} />
           </label>
-          <button className="settings-action danger" onClick={remove} disabled={!selected}>
-            Delete
+          <button type="button" className="primary-btn" onClick={createBlank}>
+            <Plus size={13} /> New widget
           </button>
         </div>
-      </div>
+      </header>
 
-      {!selected ? (
-        <div className="studio-collection-empty">
-          <h3>No widget selected</h3>
-          <p>Create or import a widget to start editing.</p>
-          <button className="primary-btn" onClick={add}>
-            <Plus size={15} /> New widget
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="studio-editor-toolbar">
-            <select
-              aria-label="Select widget"
-              value={selected.id}
-              onChange={event => onEditingIdChange(event.target.value || null)}
-            >
-              {widgets.map(widget => (
-                <option key={widget.id} value={widget.id}>{widget.name}</option>
-              ))}
-            </select>
+      {importError && <p className="inline-error">{importError}</p>}
 
-            <input
-              className="widget-name-input"
-              value={selected.name}
-              onChange={event => update({ name: event.target.value })}
-              aria-label="Widget name"
-            />
-
-            <button
-              className="settings-action"
-              onClick={() => update({ visible: !selected.visible })}
-            >
-              {selected.visible ? 'Disable on desktop' : 'Enable on desktop'}
-            </button>
+      {/* ── VIEW 1: WORKBENCH ── */}
+      {tab === 'workbench' && (
+        !selected ? (
+          <div className="ws-empty-state">
+            <span className="eyebrow">No Widget Selected</span>
+            <h3>Start building a desktop widget</h3>
+            <p>Pick a ready-made template from the library or open a clean HTML/CSS/JS workspace.</p>
+            <div className="ws-empty-actions">
+              <button type="button" className="primary-btn" onClick={createBlank}>
+                <Plus size={13} /> Blank widget
+              </button>
+              <button type="button" className="secondary-btn" onClick={() => setTab('library')}>
+                Browse templates
+              </button>
+            </div>
           </div>
+        ) : (
+          <div className="ws-workbench">
+            {/* Left Pane: Code Editor */}
+            <section className="ws-editor-pane" aria-label="Source code editor">
+              <div className="ws-file-tabs" role="tablist" aria-label="Widget files">
+                {SOURCE_FILES.map(file => (
+                  <button
+                    key={file.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeFile === file.key}
+                    className={`ws-file-tab ${activeFile === file.key ? 'is-active' : ''}`}
+                    onClick={() => setActiveFile(file.key)}
+                  >
+                    {file.label}
+                  </button>
+                ))}
 
-          <div className="studio-code-workspace">
-            <aside className="studio-file-tree">
-              <div className="studio-file-tree-heading">
-                EXPLORER <span>{selected.name}</span>
+                <div className="ws-editor-meta">
+                  {activeFile === 'json' && (
+                    <>
+                      <span className={jsonValid ? 'ws-json-ok' : 'ws-json-err'}>
+                        {jsonValid ? 'Valid JSON' : 'Invalid JSON'}
+                      </span>
+                      {jsonValid && (
+                        <button type="button" className="ws-text-btn" onClick={formatJson}>
+                          Format
+                        </button>
+                      )}
+                      <span aria-hidden="true">·</span>
+                    </>
+                  )}
+                  <span>{lineCount} {lineCount === 1 ? 'line' : 'lines'}</span>
+                </div>
               </div>
 
-              <div className="studio-file-tree-folder">▾ <strong>WIDGET</strong></div>
+              <textarea
+                className="ws-code-area"
+                aria-label={`${activeFile} source`}
+                value={selected.source[activeFile]}
+                onChange={e => updateSource(activeFile, e.target.value)}
+                onKeyDown={handleEditorKeyDown}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+              />
+            </section>
 
-              {files.map(file => (
-                <button
-                  type="button"
-                  key={file.key}
-                  className={`studio-file-tree-item ${activeFile === file.key ? 'active' : ''
-                    }`}
-                  onClick={() => setActiveFile(file.key)}
-                >
-                  <span className={`studio-file-icon file-${file.key}`}>
-                    {file.icon}
+            {/* Right Pane: Live Sandbox + Placement Inspector */}
+            <aside className="ws-inspector-pane" aria-label="Widget preview and placement">
+              <div className="ws-preview-section">
+                <div className="ws-pane-bar">
+                  <span className="ws-pane-label">
+                    Live preview · {selected.bounds.width} × {selected.bounds.height}
                   </span>
-                  <span>{file.label}</span>
-                </button>
-              ))}
-
-              <div className="studio-file-tree-hint">
-                {files.find(file => file.key === activeFile)?.description}
-              </div>
-            </aside>
-
-            <section className="studio-file-editor">
-              <div className="studio-file-tab">
-                <span className={`studio-file-icon file-${activeFile}`}>
-                  {files.find(file => file.key === activeFile)?.icon}
-                </span>
-                {files.find(file => file.key === activeFile)?.label}
-                <span className="studio-file-tab-status">Saved automatically</span>
-              </div>
-
-              <div className="studio-file-editor-content">
-                <div className="studio-file-editor-toolbar">
-                  <span>{activeFile.toUpperCase()}</span>
-                  <span>{files.find(file => file.key === activeFile)?.description}</span>
+                  <div className="ws-preview-controls">
+                    <div className="ws-seg" role="group" aria-label="Preview theme">
+                      {(['auto', 'light', 'dark'] as const).map(mode => (
+                        <button
+                          key={mode}
+                          type="button"
+                          className={previewMode === mode ? 'is-active' : ''}
+                          onClick={() => setPreviewMode(mode)}
+                        >
+                          {mode === 'auto' ? 'Sync' : mode === 'light' ? 'Light' : 'Dark'}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => setReloadNonce(n => n + 1)}
+                      title="Reload widget iframe"
+                      aria-label="Reload preview"
+                    >
+                      <RefreshCw size={13} />
+                    </button>
+                  </div>
                 </div>
 
-                <textarea
-                  className="studio-code-textarea"
-                  aria-label={`${activeFile} source`}
-                  value={selected.source[activeFile]}
-                  onChange={event => updateSource(activeFile, event.target.value)}
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                />
+                <div className={`ws-stage ws-stage--${effectivePreviewTheme}`}>
+                  {debouncedWidget && (
+                    <div
+                      className="ws-stage-scale"
+                      style={{
+                        width: Math.round(debouncedWidget.bounds.width * previewScale),
+                        height: Math.round(debouncedWidget.bounds.height * previewScale),
+                      }}
+                    >
+                      <div
+                        className="ws-stage-frame"
+                        style={{
+                          width: debouncedWidget.bounds.width,
+                          height: debouncedWidget.bounds.height,
+                          transform: `scale(${previewScale})`,
+                        }}
+                      >
+                        <WidgetRuntime
+                          key={`${debouncedWidget.id}-${reloadNonce}`}
+                          widget={debouncedWidget}
+                          theme={effectivePreviewTheme}
+                          onOpenApp={appId => {
+                            if (settings.onOpenApp && VALID_APP_IDS.includes(appId as AppId)) {
+                              settings.onOpenApp(appId as AppId);
+                            }
+                          }}
+                          onOpenUrl={url => window.open(url, '_blank', 'noopener,noreferrer')}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-            </section>
-          </div>
 
-          <div className="studio-layout-panel">
-            <div className="studio-layout-panel-heading">
-              <strong>Desktop placement</strong>
-              <span>Size and position in pixels</span>
+              <div className="ws-controls-section">
+                <div className="ws-control-row">
+                  <div>
+                    <strong>Show on desktop</strong>
+                    <span>{selected.visible ? 'Pinned to workspace canvas' : 'Hidden from canvas'}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className={`settings-switch ${selected.visible ? 'is-on' : ''}`}
+                    onClick={() => updateSelected({ visible: !selected.visible })}
+                    aria-label="Toggle widget visibility on desktop"
+                    aria-pressed={selected.visible}
+                  >
+                    <span />
+                  </button>
+                </div>
+
+                <div className="ws-placement-header">
+                  <span>Desktop placement (px)</span>
+                  <button type="button" className="ws-text-btn" onClick={centerOnDesktop}>
+                    <Crosshair size={11} /> Center
+                  </button>
+                </div>
+
+                <div className="ws-bounds-grid">
+                  {([
+                    ['width', 'Width', 20],
+                    ['height', 'Height', 20],
+                    ['x', 'Pos X', 24],
+                    ['y', 'Pos Y', 24],
+                  ] as const).map(([key, label, step]) => (
+                    <label key={key} className="ws-bound-field">
+                      <span>{label}</span>
+                      <div className="widget-stepper">
+                        <button type="button" onClick={() => updateBound(key, selected.bounds[key] - step)}>−</button>
+                        <input
+                          type="number"
+                          min={key === 'width' ? 160 : key === 'height' ? 100 : 0}
+                          step={step}
+                          value={selected.bounds[key]}
+                          onChange={e => updateBound(key, Number(e.target.value))}
+                          aria-label={label}
+                        />
+                        <button type="button" onClick={() => updateBound(key, selected.bounds[key] + step)}>+</button>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+
+                <div className="ws-inspector-actions">
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={() => settings.onPreviewWidget(selected)}
+                  >
+                    Preview on desktop <ArrowUpRight size={13} />
+                  </button>
+                  <button type="button" className="secondary-btn" onClick={() => duplicateWidget(selected)}>
+                    <Copy size={12} /> Duplicate
+                  </button>
+                  <button type="button" className="secondary-btn" onClick={() => exportWidget(selected)}>
+                    <Download size={12} /> Export
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-action danger"
+                    onClick={() => deleteWidget(selected.id)}
+                  >
+                    <Trash2 size={12} />
+                    {confirmDeleteId === selected.id ? 'Confirm delete' : 'Delete'}
+                  </button>
+                </div>
+              </div>
+            </aside>
+          </div>
+        )
+      )}
+
+      {/* ── VIEW 2: LIBRARY & STARTER TEMPLATES ── */}
+      {tab === 'library' && (
+        <div className="ws-scroll-page">
+          <section className="ws-section">
+            <div className="ws-section-head">
+              <div>
+                <span className="eyebrow">Installed</span>
+                <h3>Your widgets</h3>
+              </div>
+              <span className="count-label">{settings.widgets.length} total</span>
             </div>
 
-            <div className="widget-layout-grid">
-              {([
-                ['width', 'Width', 20],
-                ['height', 'Height', 20],
-                ['x', 'Position X', 24],
-                ['y', 'Position Y', 24]
-              ] as const).map(([key, label, step]) => (
-                <label key={key} className="widget-layout-field">
-                  <span>{label}</span>
-                  <div className="widget-stepper">
-                    <button type="button" onClick={() => adjustBound(key, -step)}>−</button>
-                    <input
-                      type="number"
-                      min={key === 'width' ? 160 : key === 'height' ? 100 : 0}
-                      step={step}
-                      value={selected.bounds[key]}
-                      onChange={event => updateBound(key, Number(event.target.value))}
-                      aria-label={label}
-                    />
-                    <button type="button" onClick={() => adjustBound(key, step)}>+</button>
+            {settings.widgets.length === 0 ? (
+              <div className="ws-inline-empty">
+                <p>No widgets installed yet. Start from a template below or create a blank widget.</p>
+                <button type="button" className="secondary-btn" onClick={createBlank}>
+                  <Plus size={13} /> Create blank widget
+                </button>
+              </div>
+            ) : (
+              <div className="ws-library-list">
+                {settings.widgets.map(widget => (
+                  <div className="ws-library-row" key={widget.id}>
+                    <div className="ws-library-info">
+                      <strong>{widget.name}</strong>
+                      <span>
+                        {widget.bounds.width} × {widget.bounds.height} px
+                        {' · '}
+                        X {widget.bounds.x}, Y {widget.bounds.y}
+                        {' · '}
+                        Updated {new Date(widget.updatedAt).toLocaleDateString()}
+                      </span>
+                    </div>
+
+                    <div className="ws-library-actions">
+                      <label className="ws-toggle-inline">
+                        <span>{widget.visible ? 'On desktop' : 'Hidden'}</span>
+                        <button
+                          type="button"
+                          className={`settings-switch ${widget.visible ? 'is-on' : ''}`}
+                          onClick={() => toggleVisible(widget.id)}
+                          aria-label={`${widget.visible ? 'Hide' : 'Show'} ${widget.name}`}
+                          aria-pressed={widget.visible}
+                        >
+                          <span />
+                        </button>
+                      </label>
+
+                      <button
+                        type="button"
+                        className="secondary-btn"
+                        onClick={() => {
+                          setEditingId(widget.id);
+                          setTab('workbench');
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        onClick={() => duplicateWidget(widget)}
+                        title="Duplicate widget"
+                        aria-label={`Duplicate ${widget.name}`}
+                      >
+                        <Copy size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        onClick={() => exportWidget(widget)}
+                        title="Export JSON"
+                        aria-label={`Export ${widget.name}`}
+                      >
+                        <Download size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className={`settings-action danger ${confirmDeleteId === widget.id ? 'is-confirming' : ''}`}
+                        onClick={() => deleteWidget(widget.id)}
+                        aria-label={`Delete ${widget.name}`}
+                      >
+                        {confirmDeleteId === widget.id ? 'Confirm?' : <Trash2 size={13} />}
+                      </button>
+                    </div>
                   </div>
-                </label>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="ws-section">
+            <div className="ws-section-head">
+              <div>
+                <span className="eyebrow">Starter Kit</span>
+                <h3>Templates</h3>
+              </div>
+              <span className="count-label">Ready to customize</span>
+            </div>
+
+            <div className="ws-template-grid">
+              {WIDGET_TEMPLATES.map(tpl => (
+                <article className="ws-template-card" key={tpl.id}>
+                  <div className="ws-template-body">
+                    <div className="ws-template-top">
+                      <strong>{tpl.name}</strong>
+                      <span>{tpl.bounds.width} × {tpl.bounds.height} px</span>
+                    </div>
+                    <p>{tpl.summary}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={() => addFromTemplate(tpl.id)}
+                  >
+                    <Plus size={13} /> Use template
+                  </button>
+                </article>
               ))}
             </div>
-          </div>
+          </section>
+        </div>
+      )}
 
-          <div className="studio-preview-bar">
-            <span>Changes save automatically to the local widget library.</span>
-            <button className="primary-btn" onClick={() => onPreview(selected)}>
-              Preview on desktop <ArrowUpRight size={14} />
-            </button>
-          </div>
-        </>
+      {/* ── VIEW 3: API REFERENCE ── */}
+      {tab === 'api' && (
+        <div className="ws-scroll-page">
+          <section className="ws-section">
+            <div className="ws-section-head">
+              <div>
+                <span className="eyebrow">Host Bridge · window.NEXUS</span>
+                <h3>Widget API Reference</h3>
+              </div>
+              <span className="count-label">Sandboxed iframe runtime</span>
+            </div>
+
+            <p className="ws-lead">
+              Every widget runs inside an isolated iframe with <code>window.NEXUS</code> pre-injected.
+              Configuration from <code>widget.json</code> is available synchronously on <code>NEXUS.data</code>.
+            </p>
+
+            <div className="ws-api-list">
+              {WIDGET_API_ENTRIES.map(entry => (
+                <article className="ws-api-item" key={entry.id}>
+                  <div className="ws-api-head">
+                    <div>
+                      <span className="ws-api-cat">{entry.category}</span>
+                      <h4>{entry.title}</h4>
+                    </div>
+                    <div className="ws-api-btns">
+                      <button
+                        type="button"
+                        className="secondary-btn"
+                        onClick={() => copySnippet(entry.id, entry.snippet)}
+                      >
+                        {copiedId === entry.id ? <Check size={12} /> : <Copy size={12} />}
+                        {copiedId === entry.id ? 'Copied' : 'Copy'}
+                      </button>
+                      {selected && (
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => appendSnippetToWidget(entry.snippet)}
+                        >
+                          Insert in {selected.name}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <code className="ws-api-sig">{entry.signature}</code>
+                  <p>{entry.description}</p>
+                  <pre className="ws-api-pre"><code>{entry.snippet}</code></pre>
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
       )}
     </div>
   );

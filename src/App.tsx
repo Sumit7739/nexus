@@ -5,7 +5,7 @@ import {
   Lock, Shield, Check, Plus, Pin,
   MoreHorizontal, List, Grid2X2, Layers,
   Sun, Moon, LogOut, RefreshCw, ChevronLeft, ChevronRight as ChevronR,
-  History, Sparkles, CheckCircle2, Wrench, Trash2, Image, ExternalLink,
+  History, Sparkles, CheckCircle2, Wrench, Trash2, Image, ExternalLink, Code2,
 } from 'lucide-react';
 import { APP_REGISTRY, getAppDefinition } from './apps/registry';
 import { AppHost } from './apps/AppHost';
@@ -101,6 +101,7 @@ function appIcon(id: AppId) {
     case 'youtube':   return Youtube;
     case 'notes':     return StickyNote;
     case 'bookmarks': return Bookmark;
+    case 'widgets':   return Code2;
     default:          return Settings2;
   }
 }
@@ -533,6 +534,7 @@ export function App() {
     widgets,
     onWidgetsChange:   (next: WidgetDefinition[]) => setWidgets(next),
     onPreviewWidget:   (widget: WidgetDefinition) => setPreviewWidget(widget),
+    onOpenApp:         (id: AppId) => openApp(id),
   };
 
   const closeAll = () => {
