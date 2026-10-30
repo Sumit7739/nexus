@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react';
@@ -20,12 +21,15 @@ import {
   Italic,
   Minus,
   PanelLeft,
+  Pause,
   Pin,
+  Play,
   Plus,
   Quote,
   Search,
   Sparkles,
   StickyNote,
+  Timer,
   Trash2,
   X,
 } from 'lucide-react';
@@ -57,6 +61,21 @@ import {
   deriveNoteTitleFromSelection,
   researchSelectionInBrowser,
 } from '../data/context-actions';
+import {
+  cleanTaskDisplayText,
+  completeLinkedScratchpadTask,
+  extendFocusSession,
+  extractUncheckedTasksFromNotes,
+  finishFocusSessionEarly,
+  formatFocusClock,
+  getFocusState,
+  pauseFocusSession,
+  requestOpenFocusPopover,
+  resetFocusSession,
+  resumeFocusSession,
+  startFocusSession,
+  subscribeFocusState,
+} from '../data/focus';
 
 type EditorMode = 'write' | 'split' | 'preview';
 type NoteFilter = 'all' | 'pinned' | 'tasks';
@@ -89,12 +108,36 @@ function renderInlineTokens(tokens: InlineToken[], keyPrefix: string): ReactNode
   });
 }
 
+function tokensToPlainText(tokens: InlineToken[]): string {
+  return tokens
+    .map((tok) => {
+      switch (tok.type) {
+        case 'text':
+        case 'code':
+          return tok.value;
+        case 'link':
+          return tok.label;
+        case 'strong':
+        case 'em':
+        case 'del':
+          return tokensToPlainText(tok.children);
+      }
+    })
+    .join('');
+}
+
 function MarkdownPreview({
   content,
   onToggleTask,
+  onFocusTask,
+  activeFocusLineIndex,
+  activeFocusClock,
 }: {
   content: string;
   onToggleTask: (lineIndex: number) => void;
+  onFocusTask?: (lineIndex: number, text: string) => void;
+  activeFocusLineIndex?: number | null;
+  activeFocusClock?: string | null;
 }) {
   const blocks = useMemo(() => parseMarkdownBlocks(content), [content]);
   const [copiedBlockIdx, setCopiedBlockIdx] = useState<number | null>(null);
@@ -144,35 +187,72 @@ function MarkdownPreview({
           case 'task-list':
             return (
               <ul key={key} className="sp-md-tasks">
-                {block.items.map((item) => (
-                  <li
-                    key={`task-${item.lineIndex}`}
-                    className={`sp-md-task-row${item.checked ? ' is-done' : ''}${
-                      item.indent > 0 ? ` indent-${item.indent}` : ''
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      role="checkbox"
-                      aria-checked={item.checked}
-                      className={`sp-task-checkbox${item.checked ? ' is-checked' : ''}`}
-                      onClick={() => onToggleTask(item.lineIndex)}
-                      title={item.checked ? 'Mark incomplete' : 'Mark complete'}
+                {block.items.map((item) => {
+                  const plainTaskText = cleanTaskDisplayText(tokensToPlainText(item.tokens));
+                  const isFocusingThis =
+                    !item.checked &&
+                    activeFocusLineIndex !== null &&
+                    activeFocusLineIndex !== undefined &&
+                    activeFocusLineIndex === item.lineIndex;
+                  return (
+                    <li
+                      key={`task-${item.lineIndex}`}
+                      className={`sp-md-task-row${item.checked ? ' is-done' : ''}${
+                        isFocusingThis ? ' is-focusing' : ''
+                      }${item.indent > 0 ? ` indent-${item.indent}` : ''}`}
                     >
-                      {item.checked && <Check size={11} strokeWidth={2.5} />}
-                    </button>
-                    <span
-                      className="sp-md-task-label"
-                      onClick={() => onToggleTask(item.lineIndex)}
-                    >
-                      {item.tokens.length > 0 ? (
-                        renderInlineTokens(item.tokens, `task-${item.lineIndex}`)
-                      ) : (
-                        <span className="sp-muted-placeholder">Empty task</span>
+                      <button
+                        type="button"
+                        role="checkbox"
+                        aria-checked={item.checked}
+                        className={`sp-task-checkbox${item.checked ? ' is-checked' : ''}`}
+                        onClick={() => onToggleTask(item.lineIndex)}
+                        title={item.checked ? 'Mark incomplete' : 'Mark complete'}
+                      >
+                        {item.checked && <Check size={11} strokeWidth={2.5} />}
+                      </button>
+                      <span
+                        className="sp-md-task-label"
+                        onClick={() => onToggleTask(item.lineIndex)}
+                      >
+                        {item.tokens.length > 0 ? (
+                          renderInlineTokens(item.tokens, `task-${item.lineIndex}`)
+                        ) : (
+                          <span className="sp-muted-placeholder">Empty task</span>
+                        )}
+                      </span>
+                      {!item.checked && plainTaskText && onFocusTask && (
+                        isFocusingThis ? (
+                          <button
+                            type="button"
+                            className="sp-task-focus-btn is-active"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              requestOpenFocusPopover();
+                            }}
+                            title="Open active focus timer"
+                          >
+                            <Timer size={11} />
+                            <span>{activeFocusClock || 'Focusing'}</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="sp-task-focus-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onFocusTask(item.lineIndex, plainTaskText);
+                            }}
+                            title={`Start focus ritual on "${plainTaskText}"`}
+                          >
+                            <Timer size={11} />
+                            <span>Focus</span>
+                          </button>
+                        )
                       )}
-                    </span>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             );
           case 'unordered-list':
@@ -227,6 +307,7 @@ function MarkdownPreview({
 }
 
 export function ScratchpadApp() {
+  const focus = useSyncExternalStore(subscribeFocusState, getFocusState);
   const [state, setState] = useState<NotesState>(readNotesState);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mode, setMode] = useState<EditorMode>('write');
@@ -362,10 +443,44 @@ export function ScratchpadApp() {
     setConfirmDeleteId(null);
   };
 
+  const uncheckedInActiveNote = useMemo(
+    () => extractUncheckedTasksFromNotes([activeNote], 25),
+    [activeNote]
+  );
+
   const handleToggleTaskLine = (lineIndex: number) => {
     const nextContent = toggleChecklistLine(activeNote.content, lineIndex);
     if (nextContent !== activeNote.content) {
       updateActiveNote({ content: nextContent });
+    }
+  };
+
+  const handleFocusTaskLine = (lineIndex: number, text: string) => {
+    const noteTitle = extractNoteTitle(activeNote.title, activeNote.content);
+    const mins = focus.preferences.defaultDurationMinutes;
+    startFocusSession({
+      linkedTask: {
+        noteId: activeNote.id,
+        noteTitle,
+        lineIndex,
+        text,
+      },
+      intention: text,
+      durationMinutes: mins,
+    });
+    showActionNotice(`Started ${mins}m focus on "${text.slice(0, 36)}"`);
+  };
+
+  const handleCompleteFocusAndCheckTask = () => {
+    if (focus.status === 'running' || focus.status === 'paused') {
+      finishFocusSessionEarly();
+    }
+    if (focus.linkedTask) {
+      const checked = completeLinkedScratchpadTask(focus.linkedTask);
+      if (checked) {
+        setState(readNotesState());
+        showActionNotice('Checked off focus task');
+      }
     }
   };
 
@@ -1107,6 +1222,22 @@ export function ScratchpadApp() {
               </button>
             )}
 
+            {focus.status === 'idle' && uncheckedInActiveNote.length > 0 && (
+              <button
+                type="button"
+                className="sp-fmt-text-action"
+                onClick={() =>
+                  handleFocusTaskLine(
+                    uncheckedInActiveNote[0].lineIndex,
+                    uncheckedInActiveNote[0].text
+                  )
+                }
+                title={`Start focus ritual on "${uncheckedInActiveNote[0].text}"`}
+              >
+                Focus next task
+              </button>
+            )}
+
             {stats.tasksCompleted > 0 && (
               <button
                 type="button"
@@ -1116,6 +1247,89 @@ export function ScratchpadApp() {
                 Clear completed ({stats.tasksCompleted})
               </button>
             )}
+          </div>
+        )}
+
+        {/* Active Focus Session Strip (visible across Write / Split / Preview) */}
+        {focus.status !== 'idle' && (
+          <div
+            className={`sp-focus-banner status-${focus.status}`}
+            role="region"
+            aria-label="Active focus session"
+          >
+            <button
+              type="button"
+              className="sp-focus-banner-main"
+              onClick={() => requestOpenFocusPopover()}
+              title="Open Focus Ritual controls"
+            >
+              <Timer size={13} strokeWidth={1.7} />
+              <span className="sp-focus-banner-clock">
+                {focus.status === 'completed'
+                  ? 'Complete'
+                  : formatFocusClock(focus.remainingSeconds)}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="sp-focus-banner-text">
+                {focus.intention || 'Deep work session'}
+              </span>
+            </button>
+            <div className="sp-focus-banner-actions">
+              {(focus.status === 'running' || focus.status === 'paused') && (
+                <>
+                  <button
+                    type="button"
+                    className="sp-focus-mini-btn"
+                    onClick={() =>
+                      focus.status === 'running'
+                        ? pauseFocusSession()
+                        : resumeFocusSession()
+                    }
+                  >
+                    {focus.status === 'running' ? <Pause size={11} /> : <Play size={11} />}
+                    <span>{focus.status === 'running' ? 'Pause' : 'Resume'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="sp-focus-mini-btn"
+                    onClick={() => extendFocusSession(5)}
+                  >
+                    <span>+5m</span>
+                  </button>
+                  {focus.phase === 'focus' && (
+                    <button
+                      type="button"
+                      className="sp-focus-mini-btn is-accent"
+                      onClick={handleCompleteFocusAndCheckTask}
+                    >
+                      <Check size={11} />
+                      <span>{focus.linkedTask ? 'Check off' : 'Finish'}</span>
+                    </button>
+                  )}
+                </>
+              )}
+              {focus.status === 'completed' && (
+                <>
+                  {focus.linkedTask && (
+                    <button
+                      type="button"
+                      className="sp-focus-mini-btn is-accent"
+                      onClick={handleCompleteFocusAndCheckTask}
+                    >
+                      <CheckSquare size={11} />
+                      <span>Check off task</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="sp-focus-mini-btn"
+                    onClick={() => resetFocusSession()}
+                  >
+                    <span>Dismiss</span>
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -1186,6 +1400,38 @@ export function ScratchpadApp() {
                     onSelect: handleTurnSelectionIntoTask,
                   },
                   {
+                    id: 'focus-selection',
+                    label: `Focus ${focus.preferences.defaultDurationMinutes}m`,
+                    icon: <Timer size={12} />,
+                    title: 'Start a timed Focus Ritual on this selection',
+                    onSelect: () => {
+                      const cleanIntent = cleanTaskDisplayText(
+                        selectionMenu.text.split(/\r?\n/)[0] ?? selectionMenu.text
+                      ).replace(/^\s*[-*]\s+\[[ xX]\]\s*/, '');
+                      if (cleanIntent) {
+                        const matchedCandidate = uncheckedInActiveNote.find(
+                          (t) => t.text === cleanIntent
+                        );
+                        startFocusSession({
+                          linkedTask: matchedCandidate
+                            ? {
+                                noteId: matchedCandidate.noteId,
+                                noteTitle: matchedCandidate.noteTitle,
+                                lineIndex: matchedCandidate.lineIndex,
+                                text: matchedCandidate.text,
+                              }
+                            : null,
+                          intention: cleanIntent,
+                          durationMinutes: focus.preferences.defaultDurationMinutes,
+                        });
+                        setSelectionMenu(null);
+                        showActionNotice(
+                          `Started ${focus.preferences.defaultDurationMinutes}m focus`
+                        );
+                      }
+                    },
+                  },
+                  {
                     id: 'extract-note',
                     label: 'New Note',
                     icon: <Plus size={12} />,
@@ -1252,6 +1498,20 @@ export function ScratchpadApp() {
               <MarkdownPreview
                 content={activeNote.content}
                 onToggleTask={handleToggleTaskLine}
+                onFocusTask={handleFocusTaskLine}
+                activeFocusLineIndex={
+                  focus.status !== 'idle' &&
+                  focus.linkedTask?.noteId === activeNote.id
+                    ? focus.linkedTask.lineIndex
+                    : null
+                }
+                activeFocusClock={
+                  focus.status === 'running' || focus.status === 'paused'
+                    ? formatFocusClock(focus.remainingSeconds)
+                    : focus.status === 'completed'
+                      ? 'Done'
+                      : null
+                }
               />
             </div>
           )}

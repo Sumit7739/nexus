@@ -20,7 +20,9 @@ import {
   Copy,
   ExternalLink,
   Globe2,
+  Headphones,
   Lock,
+  Play,
   Plus,
   RotateCw,
   Search,
@@ -64,6 +66,12 @@ import {
   sendSelectionToScratchpad,
   type BrowserSelectionSource,
 } from '../data/context-actions';
+import {
+  buildTrackFromVideoId,
+  enqueueYouTubeAction,
+  extractYouTubeVideoId,
+  playMusicTrack,
+} from '../data/media';
 import type { SettingsProps } from './AppHost';
 
 /* ── Types ────────────────────────────────────────────────────────────────── */
@@ -1862,68 +1870,100 @@ export function BrowserApp({ settings }: { settings?: SettingsProps }) {
                           </div>
 
                           <div className="nxb-serp-list">
-                            {activeTab.searchState.sources.map(src => (
-                              <article
-                                key={src.url}
-                                className="nxb-serp-item"
-                                data-source-url={src.url}
-                                data-source-title={src.title}
-                              >
-                                <div className="nxb-serp-top">
-                                  <div className="nxb-serp-site">
-                                    <span className="nxb-source-favicon">
-                                      <ShortcutFavicon
-                                        url={src.url}
-                                        title={src.title}
-                                        size={15}
-                                      />
-                                    </span>
-                                    <div className="nxb-serp-site-meta">
-                                      <strong>{src.domain}</strong>
-                                      <span>{formatUrlBreadcrumb(src.url)}</span>
+                            {activeTab.searchState.sources.map(src => {
+                              const ytId = extractYouTubeVideoId(src.url);
+                              return (
+                                <article
+                                  key={src.url}
+                                  className="nxb-serp-item"
+                                  data-source-url={src.url}
+                                  data-source-title={src.title}
+                                >
+                                  <div className="nxb-serp-top">
+                                    <div className="nxb-serp-site">
+                                      <span className="nxb-source-favicon">
+                                        <ShortcutFavicon
+                                          url={src.url}
+                                          title={src.title}
+                                          size={15}
+                                        />
+                                      </span>
+                                      <div className="nxb-serp-site-meta">
+                                        <strong>{src.domain}</strong>
+                                        <span>{formatUrlBreadcrumb(src.url)}</span>
+                                      </div>
+                                    </div>
+
+                                    <div className="nxb-source-actions">
+                                      {ytId && (
+                                        <>
+                                          <button
+                                            type="button"
+                                            className="nxb-mini-btn nxb-mini-btn--media"
+                                            onClick={() => {
+                                              enqueueYouTubeAction({
+                                                kind: 'play',
+                                                video: buildTrackFromVideoId(ytId, src.title),
+                                              });
+                                              requestOpenApp('youtube', { preferExisting: true });
+                                            }}
+                                            title="Watch video directly in Nexus Tube"
+                                          >
+                                            <Play size={11} /> Watch in Tube
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="nxb-mini-btn"
+                                            onClick={() => {
+                                              playMusicTrack(buildTrackFromVideoId(ytId, src.title));
+                                              showClipFeedback('Playing audio in background');
+                                            }}
+                                            title="Play audio in background Music player"
+                                          >
+                                            <Headphones size={11} /> Play Audio
+                                          </button>
+                                        </>
+                                      )}
+                                      <button
+                                        type="button"
+                                        className="nxb-mini-btn"
+                                        onClick={() =>
+                                          openNewTab(
+                                            { kind: 'url', url: src.url, title: src.title },
+                                            true
+                                          )
+                                        }
+                                        title="Open in a new Nexus Browser tab"
+                                      >
+                                        <Plus size={11} /> Tab
+                                      </button>
+                                      <a
+                                        href={src.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="nxb-mini-btn nxb-mini-btn--primary"
+                                        title="Open in a real external browser tab"
+                                      >
+                                        New tab <ExternalLink size={11} />
+                                      </a>
                                     </div>
                                   </div>
 
-                                  <div className="nxb-source-actions">
-                                    <button
-                                      type="button"
-                                      className="nxb-mini-btn"
-                                      onClick={() =>
-                                        openNewTab(
-                                          { kind: 'url', url: src.url, title: src.title },
-                                          true
-                                        )
-                                      }
-                                      title="Open in a new Nexus Browser tab"
-                                    >
-                                      <Plus size={11} /> Tab
-                                    </button>
-                                    <a
-                                      href={src.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="nxb-mini-btn nxb-mini-btn--primary"
-                                      title="Open in a real external browser tab"
-                                    >
-                                      New tab <ExternalLink size={11} />
-                                    </a>
-                                  </div>
-                                </div>
+                                  <a
+                                    href={src.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="nxb-serp-title"
+                                  >
+                                    {src.title}
+                                  </a>
 
-                                <a
-                                  href={src.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="nxb-serp-title"
-                                >
-                                  {src.title}
-                                </a>
-
-                                {src.snippet && (
-                                  <p className="nxb-serp-snippet">{src.snippet}</p>
-                                )}
-                              </article>
-                            ))}
+                                  {src.snippet && (
+                                    <p className="nxb-serp-snippet">{src.snippet}</p>
+                                  )}
+                                </article>
+                              );
+                            })}
                           </div>
                         </section>
                       )}
@@ -2002,6 +2042,8 @@ export function BrowserApp({ settings }: { settings?: SettingsProps }) {
             (prefs.preferExternalTabs && !forceEmbedUrls[currentLoc.url]) ||
             (restrictedByDefault && !forceEmbedUrls[currentLoc.url]);
 
+          const ytVideoId = extractYouTubeVideoId(currentLoc.url);
+
           if (showExternalCard) {
             return (
               <div className="nxb-url-launchpad">
@@ -2016,17 +2058,47 @@ export function BrowserApp({ settings }: { settings?: SettingsProps }) {
                   <h3>{currentLoc.title}</h3>
                   <p className="nxb-url-display">{currentLoc.url}</p>
                   <p className="nxb-url-desc">
-                    {restrictedByDefault
-                      ? `${host} restricts embedded frames for security and sign-in protection. Open it in a full browser tab for complete functionality.`
-                      : 'Ready to launch in a full browser tab, or preview directly inside this window.'}
+                    {ytVideoId
+                      ? 'Watch this YouTube video directly inside Nexus Tube, stream audio in the background Music player, or open it in a browser tab.'
+                      : restrictedByDefault
+                        ? `${host} restricts embedded frames for security and sign-in protection. Open it in a full browser tab for complete functionality.`
+                        : 'Ready to launch in a full browser tab, or preview directly inside this window.'}
                   </p>
 
                   <div className="nxb-launchpad-actions">
+                    {ytVideoId && (
+                      <>
+                        <button
+                          type="button"
+                          className="primary-btn"
+                          onClick={() => {
+                            enqueueYouTubeAction({
+                              kind: 'play',
+                              video: buildTrackFromVideoId(ytVideoId, currentLoc.title),
+                            });
+                            requestOpenApp('youtube', { preferExisting: true });
+                          }}
+                        >
+                          <Play size={12} fill="currentColor" /> Watch in Nexus Tube
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => {
+                            playMusicTrack(buildTrackFromVideoId(ytVideoId, currentLoc.title));
+                            showClipFeedback('Playing audio in background');
+                          }}
+                        >
+                          <Headphones size={12} /> Play Audio
+                        </button>
+                      </>
+                    )}
+
                     <a
                       href={currentLoc.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="primary-btn swa-ext-link"
+                      className={`${ytVideoId ? 'secondary-btn' : 'primary-btn'} swa-ext-link`}
                     >
                       Open in new browser tab <ExternalLink size={13} />
                     </a>
@@ -2047,22 +2119,24 @@ export function BrowserApp({ settings }: { settings?: SettingsProps }) {
                       )}
                     </button>
 
-                    <button
-                      type="button"
-                      className="secondary-btn"
-                      onClick={() => {
-                        setForceExternalCardUrls(prev => ({
-                          ...prev,
-                          [currentLoc.url]: false,
-                        }));
-                        setForceEmbedUrls(prev => ({
-                          ...prev,
-                          [currentLoc.url]: true,
-                        }));
-                      }}
-                    >
-                      <Globe2 size={12} /> Load inside window
-                    </button>
+                    {!ytVideoId && (
+                      <button
+                        type="button"
+                        className="secondary-btn"
+                        onClick={() => {
+                          setForceExternalCardUrls(prev => ({
+                            ...prev,
+                            [currentLoc.url]: false,
+                          }));
+                          setForceEmbedUrls(prev => ({
+                            ...prev,
+                            [currentLoc.url]: true,
+                          }));
+                        }}
+                      >
+                        <Globe2 size={12} /> Load inside window
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

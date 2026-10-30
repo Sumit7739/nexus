@@ -29,10 +29,145 @@ interface YouTubeSearchItem {
   description: string;
   publishedAt: string;
   thumbnail: string;
+  duration?: string;
+  durationSeconds?: number;
+  viewCount?: string;
 }
 
-const PORT = Number(process.env.PORT ?? 5173);
+const PORT = Number(process.env.PORT ?? 3000);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function parseIsoDurationToSeconds(iso: string): number {
+  const match = iso.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/i);
+  if (!match) return 0;
+  const hours = Number(match[1] ?? 0);
+  const minutes = Number(match[2] ?? 0);
+  const seconds = Number(match[3] ?? 0);
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+function formatDurationClock(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return '';
+  const safe = Math.floor(totalSeconds);
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const seconds = safe % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function formatCompactViewCount(raw?: string): string {
+  if (!raw) return '';
+  const count = Number(raw);
+  if (!Number.isFinite(count) || count <= 0) return '';
+  if (count >= 1_000_000_000) return `${(count / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B views`;
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, '')}M views`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1).replace(/\.0$/, '')}K views`;
+  return `${Math.round(count)} views`;
+}
+
+function extractYouTubeIdFromUrl(rawUrl: string): string | null {
+  try {
+    const parsed = new URL(rawUrl);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    let candidate = '';
+    if (host === 'youtu.be') {
+      candidate = parsed.pathname.split('/').filter(Boolean)[0] ?? '';
+    } else if (host === 'youtube.com' || host.endsWith('.youtube.com')) {
+      const vParam = parsed.searchParams.get('v');
+      if (vParam) {
+        candidate = vParam;
+      } else {
+        const parts = parsed.pathname.split('/').filter(Boolean);
+        if ((parts[0] === 'shorts' || parts[0] === 'embed' || parts[0] === 'live') && parts[1]) {
+          candidate = parts[1];
+        }
+      }
+    }
+    return /^[a-zA-Z0-9_-]{11}$/.test(candidate) ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+async function searchYouTubeViaLiveWebFallback(
+  query: string,
+  isMusic: boolean
+): Promise<YouTubeSearchItem[]> {
+  const targetedQuery = `site:youtube.com/watch ${isMusic ? `${query} music` : query}`;
+  const { sources } = await retrieveLiveWebSources(targetedQuery);
+  const candidates = new Map<string, WebSearchSource>();
+
+  for (const src of sources) {
+    const id = extractYouTubeIdFromUrl(src.url);
+    if (id && !candidates.has(id)) {
+      candidates.set(id, src);
+    }
+  }
+
+  if (candidates.size < 4) {
+    try {
+      const broader = await searchViaLiveWebIndex(
+        `youtube.com/watch ${isMusic ? `${query} official audio` : query}`
+      );
+      for (const src of broader) {
+        const id = extractYouTubeIdFromUrl(src.url);
+        if (id && !candidates.has(id)) {
+          candidates.set(id, src);
+        }
+        if (candidates.size >= 10) break;
+      }
+    } catch {
+      /* Ignore secondary web index errors */
+    }
+  }
+
+  const entries = [...candidates.entries()].slice(0, 10);
+  if (entries.length === 0) return [];
+
+  const enriched = await Promise.all(
+    entries.map(async ([id, src]): Promise<YouTubeSearchItem> => {
+      const cleanedFallbackTitle = src.title
+        .replace(/\s*[-|]\s*YouTube\s*$/i, '')
+        .trim();
+      try {
+        const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(
+          `https://www.youtube.com/watch?v=${id}`
+        )}&format=json`;
+        const res = await fetch(oembedUrl, { signal: AbortSignal.timeout(4000) });
+        if (res.ok) {
+          const meta = (await res.json()) as {
+            title?: string;
+            author_name?: string;
+            thumbnail_url?: string;
+          };
+          return {
+            id,
+            title: meta.title?.trim() || cleanedFallbackTitle || `YouTube video ${id}`,
+            channelTitle: meta.author_name?.trim() || 'YouTube',
+            description: src.snippet || '',
+            publishedAt: '',
+            thumbnail: meta.thumbnail_url || `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
+          };
+        }
+      } catch {
+        /* Fall back to live search metadata + standard ytimg thumbnail */
+      }
+      return {
+        id,
+        title: cleanedFallbackTitle || `YouTube video ${id}`,
+        channelTitle: 'YouTube',
+        description: src.snippet || '',
+        publishedAt: '',
+        thumbnail: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
+      };
+    })
+  );
+
+  return enriched;
+}
 
 function getDomain(rawUrl: string): string {
   try {
@@ -387,14 +522,28 @@ async function createApp() {
 
   app.get('/api/youtube/search', async (req: Request, res: Response) => {
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-    const category = req.query.category === 'music' ? '10' : '';
-    const apiKey = process.env.YOUTUBE_API_KEY?.trim();
-    if (!apiKey) {
-      res.status(503).json({ error: 'YouTube search is not configured. Set YOUTUBE_API_KEY on the server.' });
-      return;
-    }
+    const isMusic = req.query.category === 'music';
+    const category = isMusic ? '10' : '';
+
     if (query.length < 2 || query.length > 120) {
       res.status(400).json({ error: 'Enter a search with between 2 and 120 characters.' });
+      return;
+    }
+
+    const apiKey = process.env.YOUTUBE_API_KEY?.trim();
+    if (!apiKey) {
+      try {
+        const fallbackItems = await searchYouTubeViaLiveWebFallback(query, isMusic);
+        if (fallbackItems.length > 0) {
+          res.json({ items: fallbackItems, provider: 'web-oembed' });
+          return;
+        }
+      } catch {
+        /* Fall through to configuration message */
+      }
+      res.status(503).json({
+        error: 'YouTube search could not reach live results. Set YOUTUBE_API_KEY in Settings > Secrets or play directly from a YouTube URL.',
+      });
       return;
     }
 
@@ -419,28 +568,87 @@ async function createApp() {
             channelTitle?: string;
             description?: string;
             publishedAt?: string;
+            liveBroadcastContent?: string;
             thumbnails?: { medium?: { url?: string }; default?: { url?: string } };
           };
         }>;
       };
       if (!response.ok) {
+        /* If quota exceeded or invalid key, attempt live web + oEmbed fallback before failing */
+        const fallbackItems = await searchYouTubeViaLiveWebFallback(query, isMusic).catch(() => []);
+        if (fallbackItems.length > 0) {
+          res.json({ items: fallbackItems, provider: 'web-oembed' });
+          return;
+        }
         res.status(502).json({ error: data.error?.message || 'YouTube search failed.' });
         return;
       }
-      const items: YouTubeSearchItem[] = (data.items ?? []).flatMap(item => {
+
+      const rawItems: YouTubeSearchItem[] = (data.items ?? []).flatMap<YouTubeSearchItem>(item => {
         const id = item.id?.videoId;
         const snippet = item.snippet;
         if (!id || !snippet?.title) return [];
+        const isLive = snippet.liveBroadcastContent === 'live';
         return [{
           id,
           title: decodeHtmlEntities(snippet.title),
           channelTitle: decodeHtmlEntities(snippet.channelTitle ?? 'YouTube'),
           description: decodeHtmlEntities(snippet.description ?? ''),
           publishedAt: snippet.publishedAt ?? '',
-          thumbnail: snippet.thumbnails?.medium?.url ?? snippet.thumbnails?.default?.url ?? '',
+          thumbnail: snippet.thumbnails?.medium?.url ?? snippet.thumbnails?.default?.url ?? `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
+          ...(isLive ? { duration: 'LIVE', durationSeconds: 0 } : {}),
         }];
       });
-      res.json({ items });
+
+      /* Batch-fetch rich video durations & view counts via videos.list */
+      if (rawItems.length > 0) {
+        try {
+          const detailsUrl = new URL('https://www.googleapis.com/youtube/v3/videos');
+          detailsUrl.search = new URLSearchParams({
+            key: apiKey,
+            part: 'contentDetails,statistics',
+            id: rawItems.map(i => i.id).join(','),
+          }).toString();
+          const detailsRes = await fetch(detailsUrl, { signal: AbortSignal.timeout(5000) });
+          if (detailsRes.ok) {
+            const detailsData = (await detailsRes.json()) as {
+              items?: Array<{
+                id?: string;
+                contentDetails?: { duration?: string };
+                statistics?: { viewCount?: string };
+              }>;
+            };
+            const metaById = new Map(
+              (detailsData.items ?? [])
+                .filter((d): d is { id: string; contentDetails?: { duration?: string }; statistics?: { viewCount?: string } } => Boolean(d.id))
+                .map(d => [d.id, d])
+            );
+            for (const item of rawItems) {
+              const meta = metaById.get(item.id);
+              if (!meta) continue;
+              const iso = meta.contentDetails?.duration ?? '';
+              if (iso === 'P0D' || item.duration === 'LIVE') {
+                item.duration = 'LIVE';
+                item.durationSeconds = 0;
+              } else if (iso) {
+                const secs = parseIsoDurationToSeconds(iso);
+                if (secs > 0) {
+                  item.durationSeconds = secs;
+                  item.duration = formatDurationClock(secs);
+                }
+              }
+              const formattedViews = formatCompactViewCount(meta.statistics?.viewCount);
+              if (formattedViews) {
+                item.viewCount = formattedViews;
+              }
+            }
+          }
+        } catch {
+          /* Keep snippet results if secondary details call times out */
+        }
+      }
+
+      res.json({ items: rawItems, provider: 'youtube-v3' });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'YouTube search failed.';
       res.status(502).json({ error: message });

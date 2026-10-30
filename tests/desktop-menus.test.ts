@@ -47,6 +47,28 @@ describe('desktop & launcher menu layout helpers', () => {
       align: 'left',
       flipUp: false,
     });
+
+    // Default 4-column launcher grid (9 items => rows 0..3, 4..7, 8)
+    expect(computeLauncherMenuPlacement(0, 9, 'grid')).toEqual({
+      align: 'left',
+      flipUp: false,
+    });
+    expect(computeLauncherMenuPlacement(1, 9, 'grid')).toEqual({
+      align: 'center',
+      flipUp: false,
+    });
+    expect(computeLauncherMenuPlacement(2, 9, 'grid')).toEqual({
+      align: 'center',
+      flipUp: false,
+    });
+    expect(computeLauncherMenuPlacement(3, 9, 'grid')).toEqual({
+      align: 'right',
+      flipUp: false,
+    });
+    expect(computeLauncherMenuPlacement(8, 9, 'grid')).toEqual({
+      align: 'left',
+      flipUp: true,
+    });
   });
 
   it('computes safe flip behavior in launcher list view', () => {

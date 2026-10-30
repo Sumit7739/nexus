@@ -43,7 +43,7 @@ export function computeLauncherMenuPlacement(
   index: number,
   totalItems: number,
   viewMode: 'list' | 'grid',
-  gridColumns = 3
+  gridColumns = 4
 ): LauncherMenuPlacement {
   if (viewMode === 'grid') {
     const cols = Math.max(1, gridColumns);

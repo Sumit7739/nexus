@@ -1,14 +1,19 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
-  ArrowLeft, ArrowRight, ArrowUpRight, Check, Clock3, Copy, Crosshair, Download, ExternalLink,
-  Globe2, HardDriveDownload, Headphones, Home, Link2, ListVideo, MessageSquareQuote, Monitor, Palette, Pause, Pencil, Pin, Play, Plus, RefreshCw, RotateCcw, Search, Shield, SkipBack, SkipForward, Trash2, Upload, Volume2, VolumeX, X,
+  ArrowLeft, ArrowRight, ArrowUpRight, Bookmark, Check, ChevronDown, ChevronUp, Clock3, CloudRain, Copy, Crosshair, Disc3, Download, ExternalLink, Flame,
+  Globe2, HardDriveDownload, Headphones, Heart, Home, Layers, Link2, ListMusic, ListVideo, MessageSquareQuote, Monitor, MoonStar, Palette, Pause, Pencil, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Search, Shield, Shuffle, SkipBack, SkipForward, StickyNote, Trash2, Tv, Upload, Volume2, VolumeX, Waves, Wind, X,
 } from 'lucide-react';
 import type { AppId, CoreAppId } from '../window-manager/types';
 import type { DesktopMessage } from '../data/messages';
 import type { WidgetDefinition, WidgetSource } from '../widgets/types';
 import { createWidget } from '../widgets/types';
 import { WidgetRuntime } from '../widgets/WidgetRuntime';
-import { instantiateTemplate, WIDGET_API_ENTRIES, WIDGET_TEMPLATES } from '../widgets/templates';
+import {
+  instantiateTemplate,
+  WIDGET_API_ENTRIES,
+  WIDGET_TEMPLATES,
+  type ApiReferenceCategory,
+} from '../widgets/templates';
 import {
   extractHostname,
   fromShortcutAppId,
@@ -26,6 +31,75 @@ import { ShortcutFavicon } from '../components/ShortcutFavicon';
 import { BrowserApp } from './BrowserApp';
 import { ScratchpadApp } from './ScratchpadApp';
 import { NEXUS_VERSION } from '../data/version';
+import { requestOpenApp } from '../data/context-actions';
+import {
+  addTrackToMusicPlaylist,
+  buildTrackFromVideoId,
+  captureVideoTimestampNote,
+  clearMusicHistory,
+  consumeMusicActions,
+  consumeYouTubeActions,
+  createMusicPlaylist,
+  cycleMusicRepeat,
+  deleteMusicPlaylist,
+  enqueueTrackNext,
+  enqueueYouTubeAction,
+  extractYouTubeVideoId,
+  formatMediaSeconds,
+  getMusicState,
+  moveQueueTrack,
+  MUSIC_ACTION_EVENT,
+  parseTimestampInputSeconds,
+  playMusicPlaylist,
+  playMusicTrack,
+  playStarterMusicStream,
+  readYouTubeHistory,
+  readYouTubeWatchLater,
+  removeQueueTrack,
+  removeTrackFromMusicPlaylist,
+  saveYouTubeHistory,
+  saveYouTubeWatchLater,
+  seekMusicTo,
+  setMusicVolume,
+  STARTER_MUSIC_STREAMS,
+  stepMusicTrack,
+  subscribeMusicState,
+  toggleMusicMute,
+  toggleMusicPlayback,
+  toggleMusicShuffle,
+  toggleMusicTrackLiked,
+  YOUTUBE_ACTION_EVENT,
+  YOUTUBE_HISTORY_KEY,
+  type MediaTrack,
+  type MusicTab,
+  type YouTubeSection,
+} from '../data/media';
+import {
+  describeSpaceSummary,
+  isWidgetVisibleInSpace,
+  MAX_SPACES,
+  parseAudioRuleValue,
+  serializeAudioRuleValue,
+  type DesktopSpace,
+} from '../data/spaces';
+import {
+  applySoundscapePreset,
+  clearSoundscapeLevels,
+  deleteCustomSoundscapeMix,
+  describeActiveSoundscape,
+  getActiveSoundscapeLayersCount,
+  getAllSoundscapePresets,
+  getSoundscapeState,
+  isSoundscapeAudiblyPlaying,
+  saveCustomSoundscapeMix,
+  setSoundscapeLayerLevel,
+  setSoundscapeMasterVolume,
+  SOUNDSCAPE_CHANNELS,
+  subscribeSoundscapeState,
+  toggleSoundscapeLayer,
+  toggleSoundscapePlaying,
+  type SoundscapeLayerId,
+} from '../data/soundscape';
 
 /* ── SettingsProps — aligned with App.tsx ─────────────────────────────────── */
 export interface SettingsProps {
@@ -62,6 +136,20 @@ export interface SettingsProps {
   pinnedDesktop: AppId[];
   pinnedDock: AppId[];
   onTogglePin: (appId: AppId, dest: 'desktop' | 'dock') => void;
+  spaces?: DesktopSpace[];
+  activeSpaceId?: string;
+  initialSection?: 'appearance' | 'spaces' | 'desktop' | 'messages' | 'privacy' | 'backup';
+  onInitialSectionConsumed?: () => void;
+  onSwitchSpace?: (spaceId: string) => void;
+  onCreateSpace?: () => void;
+  onUpdateSpace?: (
+    spaceId: string,
+    patch: Partial<Pick<DesktopSpace, 'name' | 'description' | 'wallpaper' | 'audioRule'>>
+  ) => void;
+  onCaptureCurrentIntoSpace?: (spaceId: string) => void;
+  onToggleWidgetInSpace?: (spaceId: string, widgetId: string, visible: boolean) => void;
+  onDeleteSpace?: (spaceId: string) => void;
+  onResetSpaces?: () => void;
 }
 
 export function AppHost({ appId, settings }: { appId: AppId; settings?: SettingsProps }) {
@@ -78,7 +166,9 @@ export function AppHost({ appId, settings }: { appId: AppId; settings?: Settings
         </div>
       );
     }
-    if (isYouTubeUrl(shortcut.url)) return <YouTubeApp />;
+    if (isYouTubeUrl(shortcut.url)) {
+      return <YouTubeApp initialUrl={shortcut.url} initialTitle={shortcut.title} />;
+    }
     return (
       <ShortcutWebApp
         shortcut={shortcut}
@@ -248,110 +338,203 @@ function ShortcutWebApp({
   );
 }
 
-/* ── YouTube ──────────────────────────────────────────────────────────────── */
-interface YouTubeVideo {
-  id: string;
-  title: string;
-  channelTitle: string;
-  description: string;
-  publishedAt: string;
-  thumbnail: string;
-}
+/* ── Nexus Tube (YouTube Workspace Wrapper) ───────────────────────────────── */
 
-const YOUTUBE_HISTORY_KEY = 'nexus-youtube-history-v1';
-
-function YouTubeApp() {
+function YouTubeApp({
+  initialUrl,
+  initialTitle,
+}: {
+  initialUrl?: string;
+  initialTitle?: string;
+} = {}) {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<YouTubeVideo[]>([]);
-  const [history, setHistory] = useState<YouTubeVideo[]>(() => {
-    try {
-      const raw = localStorage.getItem(YOUTUBE_HISTORY_KEY);
-      return raw ? JSON.parse(raw) as YouTubeVideo[] : [];
-    } catch {
-      return [];
+  const [results, setResults] = useState<MediaTrack[]>([]);
+  const [history, setHistory] = useState<MediaTrack[]>(readYouTubeHistory);
+  const [watchLater, setWatchLater] = useState<MediaTrack[]>(readYouTubeWatchLater);
+  const [video, setVideo] = useState<MediaTrack | null>(() => {
+    if (initialUrl) {
+      const shortcutVid = extractYouTubeVideoId(initialUrl);
+      if (shortcutVid) {
+        return buildTrackFromVideoId(shortcutVid, initialTitle);
+      }
     }
+    return readYouTubeHistory()[0] ?? null;
   });
-  const [video, setVideo] = useState<YouTubeVideo | null>(() => history[0] ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [section, setSection] = useState<'home' | 'history' | 'url'>('home');
+  const [section, setSection] = useState<YouTubeSection>('home');
   const [videoUrl, setVideoUrl] = useState('');
-  const [searchTrail, setSearchTrail] = useState<Array<{ query: string; results: YouTubeVideo[] }>>([]);
+  const [searchTrail, setSearchTrail] = useState<Array<{ query: string; results: MediaTrack[] }>>([]);
   const [searchTrailIndex, setSearchTrailIndex] = useState(-1);
 
-  const playVideo = (next: YouTubeVideo) => {
+  /* Live playback time + Timestamp Note capture state */
+  const playerFrameRef = useRef<HTMLIFrameElement | null>(null);
+  const [liveSeconds, setLiveSeconds] = useState(0);
+  const [timestampDraft, setTimestampDraft] = useState('00:00');
+  const [timestampManuallyEdited, setTimestampManuallyEdited] = useState(false);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [showDescription, setShowDescription] = useState(false);
+  const [toastMessage, setToastMessage] = useState<{ text: string; showScratchpadLink?: boolean } | null>(null);
+
+  const originParam =
+    typeof window !== 'undefined' && window.location.origin
+      ? `&origin=${encodeURIComponent(window.location.origin)}`
+      : '';
+
+  const showToast = useCallback((text: string, showScratchpadLink = false) => {
+    setToastMessage({ text, showScratchpadLink });
+    window.setTimeout(() => {
+      setToastMessage(prev => (prev?.text === text ? null : prev));
+    }, 3200);
+  }, []);
+
+  const playVideo = useCallback((next: MediaTrack) => {
     setVideo(next);
     setSection('home');
+    setLiveSeconds(0);
+    setTimestampDraft('00:00');
+    setTimestampManuallyEdited(false);
+    setShowDescription(false);
     setHistory(previous => {
-      const updated = [next, ...previous.filter(item => item.id !== next.id)].slice(0, 20);
-      try { localStorage.setItem(YOUTUBE_HISTORY_KEY, JSON.stringify(updated)); } catch {}
+      const updated = [next, ...previous.filter(item => item.id !== next.id)].slice(0, 30);
+      saveYouTubeHistory(updated);
       return updated;
     });
-  };
+  }, []);
 
-  const clearHistory = () => {
-    setHistory([]);
-    try { localStorage.removeItem(YOUTUBE_HISTORY_KEY); } catch {}
-  };
-
-  const playFromUrl = (event: FormEvent) => {
-    event.preventDefault();
-    const raw = videoUrl.trim();
-    let id = raw;
-    try {
-      const parsed = new URL(raw.includes('://') ? raw : `https://${raw}`);
-      const hostname = parsed.hostname.toLowerCase().replace(/^www\./, '');
-      if (hostname === 'youtu.be') {
-        id = parsed.pathname.split('/').filter(Boolean)[0] ?? '';
-      } else if (hostname === 'youtube.com' || hostname.endsWith('.youtube.com')) {
-        id = parsed.searchParams.get('v') ?? parsed.pathname.split('/').filter(Boolean).pop() ?? '';
-      }
-    } catch {
-      id = raw;
-    }
-    if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) {
-      setError('Enter a valid YouTube URL or 11-character video ID.');
-      return;
-    }
-    playVideo({
-      id,
-      title: `YouTube video ${id}`,
-      channelTitle: 'YouTube',
-      description: '',
-      publishedAt: '',
-      thumbnail: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
-    });
-    setVideoUrl('');
-    setError('');
-  };
-
-  const runSearch = async (trimmed: string, record = true) => {
+  const runSearch = useCallback(async (trimmed: string, record = true) => {
     if (trimmed.length < 2) {
       setError('Enter at least two characters to search YouTube.');
       return;
     }
     setLoading(true);
     setError('');
+    setSection('home');
     try {
       const response = await fetch(`/api/youtube/search?q=${encodeURIComponent(trimmed)}`);
-      const data = await response.json() as { items?: YouTubeVideo[]; error?: string };
+      const data = (await response.json()) as { items?: MediaTrack[]; error?: string };
       if (!response.ok) throw new Error(data.error || 'YouTube search failed.');
-      setResults(data.items ?? []);
+      const items = data.items ?? [];
+      setResults(items);
       setQuery(trimmed);
       if (record) {
         setSearchTrail(previous => {
-          const next = [...previous.slice(0, searchTrailIndex + 1), { query: trimmed, results: data.items ?? [] }];
+          const next = [...previous.slice(0, searchTrailIndex + 1), { query: trimmed, results: items }];
           setSearchTrailIndex(next.length - 1);
           return next;
         });
       }
-
-      if (!data.items?.length) setError('No videos found for that search.');
+      if (!items.length) setError('No videos found for that search.');
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : 'YouTube search failed.');
     } finally {
       setLoading(false);
     }
+  }, [searchTrailIndex]);
+
+  /* Sync storage updates (e.g., workspace import/reset) */
+  useEffect(() => {
+    const syncLists = () => {
+      setHistory(readYouTubeHistory());
+      setWatchLater(readYouTubeWatchLater());
+    };
+    window.addEventListener('storage', syncLists);
+    return () => window.removeEventListener('storage', syncLists);
+  }, []);
+
+  /* Consume queued cross-app YouTube actions (from Spotlight, Browser, or Menus) */
+  useEffect(() => {
+    const processActions = () => {
+      const actions = consumeYouTubeActions();
+      for (const action of actions) {
+        if (action.kind === 'search') {
+          void runSearch(action.query, true);
+        } else if (action.kind === 'play') {
+          playVideo(action.video);
+        } else if (action.kind === 'play-url') {
+          const vid = extractYouTubeVideoId(action.url);
+          if (vid) {
+            playVideo(buildTrackFromVideoId(vid, action.title));
+          } else {
+            setVideoUrl(action.url);
+            setSection('url');
+          }
+        } else if (action.kind === 'section') {
+          setSection(action.section);
+          setError('');
+        }
+      }
+    };
+    processActions();
+    window.addEventListener(YOUTUBE_ACTION_EVENT, processActions);
+    return () => window.removeEventListener(YOUTUBE_ACTION_EVENT, processActions);
+  }, [playVideo, runSearch]);
+
+  /* Track live playback timestamp from embedded youtube-nocookie iframe */
+  useEffect(() => {
+    if (!video) return;
+    const handleMessage = (event: MessageEvent) => {
+      if (event.source !== playerFrameRef.current?.contentWindow) return;
+      if (typeof event.data !== 'string') return;
+      try {
+        const parsed = JSON.parse(event.data) as {
+          event?: string;
+          info?: { currentTime?: number };
+        };
+        if (
+          parsed.event === 'infoDelivery' &&
+          parsed.info &&
+          typeof parsed.info.currentTime === 'number' &&
+          Number.isFinite(parsed.info.currentTime)
+        ) {
+          const secs = Math.max(0, Math.floor(parsed.info.currentTime));
+          setLiveSeconds(secs);
+          setTimestampDraft(prev => (timestampManuallyEdited ? prev : formatMediaSeconds(secs)));
+        }
+      } catch {
+        /* Ignore non-JSON iframe messages */
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [timestampManuallyEdited, video]);
+
+  const toggleWatchLater = (target: MediaTrack) => {
+    setWatchLater(prev => {
+      const exists = prev.some(item => item.id === target.id);
+      const next = exists
+        ? prev.filter(item => item.id !== target.id)
+        : [target, ...prev].slice(0, 40);
+      saveYouTubeWatchLater(next);
+      showToast(exists ? 'Removed from Watch later' : 'Saved to Watch later');
+      return next;
+    });
+  };
+
+  const handoffToMusic = (target: MediaTrack) => {
+    playMusicTrack(target, results.length ? results : history.length ? history : [target]);
+    showToast(`Playing "${target.title}" in Music`);
+  };
+
+  const clearHistory = () => {
+    setHistory([]);
+    try {
+      localStorage.removeItem(YOUTUBE_HISTORY_KEY);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const playFromUrl = (event: FormEvent) => {
+    event.preventDefault();
+    const id = extractYouTubeVideoId(videoUrl);
+    if (!id) {
+      setError('Enter a valid YouTube URL or 11-character video ID.');
+      return;
+    }
+    playVideo(buildTrackFromVideoId(id));
+    setVideoUrl('');
+    setError('');
   };
 
   const search = async (event: FormEvent) => {
@@ -366,7 +549,6 @@ function YouTubeApp() {
     setSearchTrailIndex(targetIndex);
     setQuery(target.query);
     setResults(target.results);
-    setVideo(null);
     setError('');
   };
 
@@ -383,61 +565,252 @@ function YouTubeApp() {
     setSearchTrailIndex(-1);
   };
 
+  const handleCaptureTimestampNote = (event: FormEvent) => {
+    event.preventDefault();
+    if (!video) return;
+    const parsedSecs = parseTimestampInputSeconds(timestampDraft);
+    const chosenSeconds = parsedSecs !== null ? parsedSecs : liveSeconds;
+    const res = captureVideoTimestampNote({
+      video,
+      seconds: chosenSeconds,
+      noteText: noteDraft,
+      openScratchpad: false,
+    });
+    setNoteDraft('');
+    setTimestampManuallyEdited(false);
+    setTimestampDraft(formatMediaSeconds(liveSeconds));
+    showToast(`Saved [${res.formattedTimestamp}] note to Scratchpad`, true);
+  };
+
+  const watchLaterIds = useMemo(() => new Set(watchLater.map(item => item.id)), [watchLater]);
+  const isVideoSavedLater = video ? watchLaterIds.has(video.id) : false;
+
   return (
     <div className="youtube-app">
       <div className="youtube-shell">
         <aside className="youtube-sidebar">
-          <div className="youtube-brand"><span className="youtube-brand-mark"><Play size={13} fill="currentColor" /></span><strong>Nexus Tube</strong></div>
+          <div className="youtube-brand">
+            <span className="youtube-brand-mark"><Play size={13} fill="currentColor" /></span>
+            <strong>Nexus Tube</strong>
+          </div>
           <nav className="youtube-nav" aria-label="YouTube sections">
-            <button type="button" className={section === 'home' ? 'is-active' : ''} onClick={() => setSection('home')}><Home size={15} /><span>Home</span></button>
-            <button type="button" className={section === 'history' ? 'is-active' : ''} onClick={() => setSection('history')}><Clock3 size={15} /><span>Watch history</span><small>{history.length}</small></button>
-            <button type="button" className={section === 'url' ? 'is-active' : ''} onClick={() => { setSection('url'); setError(''); }}><Link2 size={15} /><span>Play from URL</span></button>
+            <button
+              type="button"
+              className={section === 'home' ? 'is-active' : ''}
+              onClick={() => setSection('home')}
+            >
+              <Home size={15} />
+              <span>Home</span>
+            </button>
+            <button
+              type="button"
+              className={section === 'watch-later' ? 'is-active' : ''}
+              onClick={() => setSection('watch-later')}
+            >
+              <Bookmark size={15} />
+              <span>Watch later</span>
+              <small>{watchLater.length}</small>
+            </button>
+            <button
+              type="button"
+              className={section === 'history' ? 'is-active' : ''}
+              onClick={() => setSection('history')}
+            >
+              <Clock3 size={15} />
+              <span>Watch history</span>
+              <small>{history.length}</small>
+            </button>
+            <button
+              type="button"
+              className={section === 'url' ? 'is-active' : ''}
+              onClick={() => {
+                setSection('url');
+                setError('');
+              }}
+            >
+              <Link2 size={15} />
+              <span>Play from URL</span>
+            </button>
           </nav>
           <div className="youtube-sidebar-divider" />
           <div className="youtube-sidebar-label">Your library</div>
-          <div className="youtube-library-item"><ListVideo size={14} /><span>Saved locally</span></div>
+          <div className="youtube-library-item">
+            <ListVideo size={14} />
+            <span>Saved locally</span>
+          </div>
           <div className="youtube-sidebar-spacer" />
-          {history.length > 0 && <button type="button" className="youtube-clear-history" onClick={clearHistory}><Trash2 size={13} /> Clear history</button>}
+          {history.length > 0 && (
+            <button type="button" className="youtube-clear-history" onClick={clearHistory}>
+              <Trash2 size={13} /> Clear history
+            </button>
+          )}
         </aside>
+
         <main className="youtube-main">
           {section !== 'url' && (
             <div className="youtube-search-row">
               <form className="youtube-search-bar" onSubmit={search}>
                 <Search size={15} />
-                <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search videos…" aria-label="Search YouTube videos" />
-                <button type="submit" className="primary-btn" disabled={loading}>{loading ? 'Searching…' : 'Search'}</button>
+                <input
+                  value={query}
+                  onChange={event => setQuery(event.target.value)}
+                  placeholder="Search videos, channels, or topics…"
+                  aria-label="Search YouTube videos"
+                />
+                <button type="submit" className="primary-btn" disabled={loading}>
+                  {loading ? 'Searching…' : 'Search'}
+                </button>
               </form>
               <div className="youtube-search-actions" aria-label="Search controls">
-                <button type="button" className="youtube-icon-action" onClick={() => navigateSearch(-1)} disabled={searchTrailIndex <= 0} title="Previous search" aria-label="Previous search"><ArrowLeft size={14} /></button>
-                <button type="button" className="youtube-icon-action" onClick={() => navigateSearch(1)} disabled={searchTrailIndex < 0 || searchTrailIndex >= searchTrail.length - 1} title="Next search" aria-label="Next search"><ArrowRight size={14} /></button>
-                <button type="button" className="youtube-icon-action" onClick={refreshSearch} disabled={loading || query.trim().length < 2} title="Refresh search" aria-label="Refresh search"><RefreshCw size={14} /></button>
-                <button type="button" className="youtube-icon-action" onClick={clearSearch} disabled={!query && !results.length && !video} title="Clear screen" aria-label="Clear screen"><X size={14} /></button>
+                <button
+                  type="button"
+                  className="youtube-icon-action"
+                  onClick={() => navigateSearch(-1)}
+                  disabled={searchTrailIndex <= 0}
+                  title="Previous search"
+                  aria-label="Previous search"
+                >
+                  <ArrowLeft size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="youtube-icon-action"
+                  onClick={() => navigateSearch(1)}
+                  disabled={searchTrailIndex < 0 || searchTrailIndex >= searchTrail.length - 1}
+                  title="Next search"
+                  aria-label="Next search"
+                >
+                  <ArrowRight size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="youtube-icon-action"
+                  onClick={refreshSearch}
+                  disabled={loading || query.trim().length < 2}
+                  title="Refresh search"
+                  aria-label="Refresh search"
+                >
+                  <RefreshCw size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="youtube-icon-action"
+                  onClick={clearSearch}
+                  disabled={!query && !results.length && !video}
+                  title="Clear screen"
+                  aria-label="Clear screen"
+                >
+                  <X size={14} />
+                </button>
               </div>
             </div>
           )}
+
           {error && <p className="inline-error youtube-error">{error}</p>}
+
+          {toastMessage && (
+            <div className="yt-inline-toast" role="status" aria-live="polite">
+              <Check size={12} />
+              <span>{toastMessage.text}</span>
+              {toastMessage.showScratchpadLink && (
+                <button
+                  type="button"
+                  className="ctx-action-toast-link"
+                  onClick={() => {
+                    setToastMessage(null);
+                    requestOpenApp('notes', { preferExisting: true });
+                  }}
+                >
+                  Open Scratchpad
+                </button>
+              )}
+            </div>
+          )}
+
           {section === 'url' ? (
             <section className="youtube-url-view">
               <div className="youtube-url-hero">
                 <span className="eyebrow">Direct playback</span>
                 <h3>Play a video from a URL</h3>
-                <p>Paste a YouTube link or enter an 11-character video ID to play it in Nexus.</p>
+                <p>Paste a YouTube link, Shorts link, or 11-character video ID to watch inside Nexus.</p>
                 <form className="youtube-url-bar" onSubmit={playFromUrl}>
                   <Link2 size={15} />
-                  <input autoFocus value={videoUrl} onChange={event => setVideoUrl(event.target.value)} placeholder="https://youtube.com/watch?v=…" aria-label="Play YouTube URL" />
+                  <input
+                    autoFocus
+                    value={videoUrl}
+                    onChange={event => setVideoUrl(event.target.value)}
+                    placeholder="https://youtube.com/watch?v=…"
+                    aria-label="Play YouTube URL"
+                  />
                   <button type="submit" className="primary-btn">Play video</button>
                 </form>
-                <small>Supported: youtube.com, youtu.be, embed links, and video IDs.</small>
+                <small>Supported: youtube.com, youtu.be, shorts, embed links, and video IDs.</small>
               </div>
-              {video && <button type="button" className="youtube-return-link" onClick={() => setSection('home')}><Play size={13} /> Return to currently playing video</button>}
+              {video && (
+                <button type="button" className="youtube-return-link" onClick={() => setSection('home')}>
+                  <Play size={13} /> Return to currently playing video
+                </button>
+              )}
+            </section>
+          ) : section === 'watch-later' ? (
+            <section className="youtube-history-view">
+              <div className="youtube-content-heading">
+                <div>
+                  <span className="eyebrow">Saved queue</span>
+                  <h3>Watch later</h3>
+                </div>
+                <span className="yt-count-label">{watchLater.length} saved</span>
+              </div>
+              <div className="youtube-video-grid">
+                {watchLater.map(item => (
+                  <YouTubeVideoCard
+                    key={item.id}
+                    item={item}
+                    activeId={video?.id}
+                    isSavedLater={watchLaterIds.has(item.id)}
+                    onPlay={playVideo}
+                    onToggleWatchLater={toggleWatchLater}
+                    onListenInMusic={handoffToMusic}
+                  />
+                ))}
+              </div>
+              {!watchLater.length && (
+                <div className="youtube-empty">
+                  <Bookmark size={26} />
+                  <strong>Your Watch later list is empty</strong>
+                  <span>Bookmark any search result or active video to save it for later.</span>
+                </div>
+              )}
             </section>
           ) : section === 'history' ? (
             <section className="youtube-history-view">
-              <div className="youtube-content-heading"><div><span className="eyebrow">Your library</span><h3>Watch history</h3></div><span>{history.length} saved</span></div>
-              <div className="youtube-video-grid">
-                {history.map(item => <YouTubeVideoCard key={item.id} item={item} activeId={video?.id} onPlay={playVideo} />)}
+              <div className="youtube-content-heading">
+                <div>
+                  <span className="eyebrow">Your library</span>
+                  <h3>Watch history</h3>
+                </div>
+                <span className="yt-count-label">{history.length} watched</span>
               </div>
-              {!history.length && <div className="youtube-empty"><Clock3 size={28} /><strong>Your history is empty</strong><span>Videos you play will be saved here on this device.</span></div>}
+              <div className="youtube-video-grid">
+                {history.map(item => (
+                  <YouTubeVideoCard
+                    key={item.id}
+                    item={item}
+                    activeId={video?.id}
+                    isSavedLater={watchLaterIds.has(item.id)}
+                    onPlay={playVideo}
+                    onToggleWatchLater={toggleWatchLater}
+                    onListenInMusic={handoffToMusic}
+                  />
+                ))}
+              </div>
+              {!history.length && (
+                <div className="youtube-empty">
+                  <Clock3 size={28} />
+                  <strong>Your history is empty</strong>
+                  <span>Videos you play will be saved here on this device.</span>
+                </div>
+              )}
             </section>
           ) : (
             <section className="youtube-home-view">
@@ -445,163 +818,1260 @@ function YouTubeApp() {
                 {video ? (
                   <>
                     <div className="video-stage">
-                      <iframe title={video.title} src={`https://www.youtube-nocookie.com/embed/${video.id}?rel=0`} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen />
+                      <iframe
+                        key={video.id}
+                        ref={playerFrameRef}
+                        title={video.title}
+                        src={`https://www.youtube-nocookie.com/embed/${video.id}?rel=0&enablejsapi=1${originParam}`}
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        referrerPolicy="strict-origin-when-cross-origin"
+                        allowFullScreen
+                        onLoad={() => {
+                          playerFrameRef.current?.contentWindow?.postMessage(
+                            JSON.stringify({ event: 'listening', id: 'nexus-tube', channel: 'widget' }),
+                            'https://www.youtube-nocookie.com'
+                          );
+                        }}
+                      />
                     </div>
-                    <div className="youtube-now-playing"><strong>{video.title}</strong><span>{video.channelTitle}</span></div>
+
+                    <div className="youtube-now-playing">
+                      <div className="yt-np-header">
+                        <div className="yt-np-copy">
+                          <strong>{video.title}</strong>
+                          <span className="yt-np-subline">
+                            {[video.channelTitle, video.viewCount, video.duration]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </span>
+                        </div>
+                        <div className="yt-np-actions">
+                          <button
+                            type="button"
+                            className={`secondary-btn yt-action-btn ${isVideoSavedLater ? 'is-saved' : ''}`}
+                            onClick={() => toggleWatchLater(video)}
+                            title={isVideoSavedLater ? 'Remove from Watch later' : 'Save to Watch later'}
+                          >
+                            {isVideoSavedLater ? <Check size={12} /> : <Bookmark size={12} />}
+                            <span>{isVideoSavedLater ? 'Saved' : 'Watch later'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-btn yt-action-btn"
+                            onClick={() => handoffToMusic(video)}
+                            title="Continue listening in background desktop Music player"
+                          >
+                            <Headphones size={12} />
+                            <span>Listen in Music</span>
+                          </button>
+                          {video.description.trim().length > 0 && (
+                            <button
+                              type="button"
+                              className="secondary-btn yt-action-btn"
+                              onClick={() => setShowDescription(v => !v)}
+                              aria-expanded={showDescription}
+                            >
+                              {showDescription ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                              <span>Details</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {showDescription && video.description.trim().length > 0 && (
+                        <p className="yt-np-description">{video.description}</p>
+                      )}
+
+                      {/* Timestamp Note Capture to Scratchpad */}
+                      <form className="yt-note-bar" onSubmit={handleCaptureTimestampNote}>
+                        <button
+                          type="button"
+                          className="yt-ts-sync-btn"
+                          onClick={() => {
+                            setTimestampManuallyEdited(false);
+                            setTimestampDraft(formatMediaSeconds(liveSeconds));
+                          }}
+                          title="Sync input to current playback timestamp"
+                        >
+                          <Clock3 size={12} />
+                        </button>
+                        <input
+                          className="yt-ts-input"
+                          value={timestampDraft}
+                          onChange={e => {
+                            setTimestampManuallyEdited(true);
+                            setTimestampDraft(e.target.value);
+                          }}
+                          aria-label="Video timestamp MM:SS"
+                          title="Timestamp (MM:SS)"
+                        />
+                        <input
+                          className="yt-note-input"
+                          value={noteDraft}
+                          onChange={e => setNoteDraft(e.target.value)}
+                          placeholder="Capture a timestamped note to Scratchpad…"
+                          aria-label="Timestamped note for Scratchpad"
+                        />
+                        <button type="submit" className="secondary-btn yt-note-submit">
+                          <StickyNote size={12} />
+                          <span>Save note</span>
+                        </button>
+                      </form>
+                    </div>
                   </>
-                ) : !results.length && <div className="youtube-empty"><Play size={28} /><strong>Search for something to watch</strong><span>Videos you play will appear in your local history.</span></div>}
+                ) : (
+                  !results.length && (
+                    <div className="youtube-empty">
+                      <Play size={28} />
+                      <strong>Search for something to watch</strong>
+                      <span>Videos you play stay in your local workspace history.</span>
+                    </div>
+                  )
+                )}
               </div>
+
               {(results.length > 0 || history.length > 0) && (
                 <div className="youtube-discovery">
-                  <div className="youtube-content-heading"><div><span className="eyebrow">{results.length ? 'Discover' : 'Continue watching'}</span><h3>{results.length ? 'Search results' : 'Recently watched'}</h3></div><span>{results.length || history.length} videos</span></div>
-                  <div className="youtube-video-grid">{(results.length ? results : history).map(item => <YouTubeVideoCard key={item.id} item={item} activeId={video?.id} onPlay={playVideo} />)}</div>
+                  <div className="youtube-content-heading">
+                    <div>
+                      <span className="eyebrow">{results.length ? 'Discover' : 'Continue watching'}</span>
+                      <h3>{results.length ? 'Search results' : 'Recently watched'}</h3>
+                    </div>
+                    <span className="yt-count-label">{results.length || history.length} videos</span>
+                  </div>
+                  <div className="youtube-video-grid">
+                    {(results.length ? results : history).map(item => (
+                      <YouTubeVideoCard
+                        key={item.id}
+                        item={item}
+                        activeId={video?.id}
+                        isSavedLater={watchLaterIds.has(item.id)}
+                        onPlay={playVideo}
+                        onToggleWatchLater={toggleWatchLater}
+                        onListenInMusic={handoffToMusic}
+                      />
+                    ))}
+                  </div>
                 </div>
               )}
             </section>
           )}
         </main>
       </div>
-      <div className="web-app-footer"><span>Search and history stay in this Nexus workspace.</span>{video && <a href={`https://www.youtube.com/watch?v=${video.id}`} target="_blank" rel="noopener noreferrer"><ExternalLink size={11} /> Watch on YouTube</a>}</div>
+
+      <div className="web-app-footer">
+        <span>Search, Watch later, and history stay in this Nexus workspace.</span>
+        {video && (
+          <a
+            href={`https://www.youtube.com/watch?v=${video.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <ExternalLink size={11} /> Watch on YouTube
+          </a>
+        )}
+      </div>
     </div>
   );
 }
 
-const MUSIC_HISTORY_KEY = 'nexus-music-history-v1';
+/* ── Nexus Music (Persistent Desktop Audio Controller) ────────────────────── */
+
+const SOUNDSCAPE_CHANNEL_ICONS: Record<SoundscapeLayerId, typeof CloudRain> = {
+  rain: CloudRain,
+  vinyl: Disc3,
+  hearth: Flame,
+  brown: Waves,
+  wind: Wind,
+  night: MoonStar,
+};
 
 function MusicApp() {
+  const music = useSyncExternalStore(subscribeMusicState, getMusicState);
+  const soundscape = useSyncExternalStore(subscribeSoundscapeState, getSoundscapeState);
   const [query, setQuery] = useState('');
-  const [tracks, setTracks] = useState<YouTubeVideo[]>([]);
-  const [history, setHistory] = useState<YouTubeVideo[]>(() => {
-    try {
-      const raw = localStorage.getItem(MUSIC_HISTORY_KEY);
-      return raw ? JSON.parse(raw) as YouTubeVideo[] : [];
-    } catch {
-      return [];
-    }
-  });
-  const [current, setCurrent] = useState<YouTubeVideo | null>(null);
+  const [tracks, setTracks] = useState<MediaTrack[]>([]);
+  const [tab, setTab] = useState<MusicTab>('discover');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const playerRef = useRef<HTMLIFrameElement>(null);
-  const [isPlaying, setIsPlaying] = useState(true);
-  const [isMuted, setIsMuted] = useState(false);
+  const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false);
+  const [newPlaylistName, setNewPlaylistName] = useState('');
+  const [newMixName, setNewMixName] = useState('');
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
+  const [artworkFailedId, setArtworkFailedId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
 
-  const playTrack = (track: YouTubeVideo) => {
-    setCurrent(track);
-    setIsPlaying(true);
-    setIsMuted(false);
-    setHistory(previous => {
-      const next = [track, ...previous.filter(item => item.id !== track.id)].slice(0, 30);
-      try { localStorage.setItem(MUSIC_HISTORY_KEY, JSON.stringify(next)); } catch {}
-      return next;
-    });
-  };
+  const activeAmbientCount = getActiveSoundscapeLayersCount(soundscape.levels);
+  const ambientAudible = isSoundscapeAudiblyPlaying(soundscape);
+  const allSoundscapePresets = useMemo(() => getAllSoundscapePresets(soundscape), [soundscape]);
 
-  const sendPlayerCommand = (func: string, args: unknown[] = []) => {
-    playerRef.current?.contentWindow?.postMessage(
-      JSON.stringify({ event: 'command', func, args }),
-      'https://www.youtube-nocookie.com'
-    );
-  };
+  const showFeedback = useCallback((msg: string) => {
+    setFeedback(msg);
+    window.setTimeout(() => {
+      setFeedback(prev => (prev === msg ? null : prev));
+    }, 2400);
+  }, []);
 
-  const togglePlayback = () => {
-    sendPlayerCommand(isPlaying ? 'pauseVideo' : 'playVideo');
-    setIsPlaying(value => !value);
-  };
-
-  const visibleQueue = tracks.length ? tracks : history;
-  const currentIndex = current ? visibleQueue.findIndex(item => item.id === current.id) : -1;
-  const playRelativeTrack = (offset: number) => {
-    const next = visibleQueue[currentIndex + offset];
-    if (next) playTrack(next);
-  };
-
-  const toggleMute = () => {
-    sendPlayerCommand(isMuted ? 'unMute' : 'mute');
-    setIsMuted(value => !value);
-  };
-
-  const searchMusic = async (event: FormEvent) => {
-    event.preventDefault();
-    const trimmed = query.trim();
+  const runMusicSearch = useCallback(async (trimmed: string) => {
     if (trimmed.length < 2) {
       setError('Search for an artist, album, song, or mood.');
       return;
     }
     setLoading(true);
     setError('');
+    setTab('discover');
     try {
-      const response = await fetch(`/api/youtube/search?q=${encodeURIComponent(trimmed)}&category=music`);
-      const data = await response.json() as { items?: YouTubeVideo[]; error?: string };
+      const response = await fetch(
+        `/api/youtube/search?q=${encodeURIComponent(trimmed)}&category=music`
+      );
+      const data = (await response.json()) as { items?: MediaTrack[]; error?: string };
       if (!response.ok) throw new Error(data.error || 'Music search failed.');
-      setTracks(data.items ?? []);
-      if (!data.items?.length) setError('No music found for that search.');
+      const items = data.items ?? [];
+      setTracks(items);
+      setQuery(trimmed);
+      if (!items.length) setError('No music found for that search.');
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : 'Music search failed.');
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    const processMusicActions = () => {
+      const actions = consumeMusicActions();
+      for (const action of actions) {
+        if (action.kind === 'search') {
+          void runMusicSearch(action.query);
+        } else if (action.kind === 'tab') {
+          setTab(action.tab);
+        }
+      }
+    };
+    processMusicActions();
+    window.addEventListener(MUSIC_ACTION_EVENT, processMusicActions);
+    return () => window.removeEventListener(MUSIC_ACTION_EVENT, processMusicActions);
+  }, [runMusicSearch]);
+
+  const searchMusic = async (event: FormEvent) => {
+    event.preventDefault();
+    await runMusicSearch(query.trim());
   };
 
-  const clearHistory = () => {
-    setHistory([]);
-    try { localStorage.removeItem(MUSIC_HISTORY_KEY); } catch {}
+  const current = music.current;
+  const likedIds = useMemo(() => new Set(music.liked.map(item => item.id)), [music.liked]);
+  const isCurrentLiked = current ? likedIds.has(current.id) : false;
+
+  const isLiveStream = Boolean(
+    current && (current.duration === 'LIVE' || (music.duration <= 0 && !current.durationSeconds))
+  );
+  const displayDuration = current
+    ? music.duration > 0
+      ? music.duration
+      : (current.durationSeconds ?? 0)
+    : 0;
+
+  const activePlaylist = useMemo(
+    () =>
+      music.playlists.find(p => p.id === selectedPlaylistId) ??
+      music.playlists[0] ??
+      null,
+    [music.playlists, selectedPlaylistId]
+  );
+
+  const handleCreatePlaylist = (event: FormEvent) => {
+    event.preventDefault();
+    const created = createMusicPlaylist(newPlaylistName, current ?? undefined);
+    if (!created) return;
+    setNewPlaylistName('');
+    setSelectedPlaylistId(created.id);
+    setPlaylistMenuOpen(false);
+    showFeedback(
+      current
+        ? `Created "${created.name}" with current track`
+        : `Created playlist "${created.name}"`
+    );
+  };
+
+  const watchCurrentInTube = () => {
+    if (!current) return;
+    enqueueYouTubeAction({ kind: 'play', video: current });
+    requestOpenApp('youtube', { preferExisting: true });
   };
 
   return (
     <div className="music-app">
       <header className="music-header">
-        <div className="music-brand"><span className="music-brand-icon"><Headphones size={17} /></span><div><span className="eyebrow">Nexus audio</span><h3>Music</h3></div></div>
-        <span className="music-header-note">Powered by YouTube search</span>
+        <div className="music-brand">
+          <span className="music-brand-icon"><Headphones size={17} /></span>
+          <div>
+            <span className="eyebrow">Nexus audio</span>
+            <h3>Music</h3>
+          </div>
+        </div>
+
+        <nav className="ws-seg music-tabs" aria-label="Music library sections">
+          <button
+            type="button"
+            className={tab === 'discover' ? 'is-active' : ''}
+            onClick={() => setTab('discover')}
+          >
+            Discover
+          </button>
+          <button
+            type="button"
+            className={tab === 'soundscapes' ? 'is-active' : ''}
+            onClick={() => setTab('soundscapes')}
+          >
+            {activeAmbientCount > 0 ? `Soundscapes · ${activeAmbientCount}` : 'Soundscapes'}
+          </button>
+          <button
+            type="button"
+            className={tab === 'queue' ? 'is-active' : ''}
+            onClick={() => setTab('queue')}
+          >
+            Queue · {music.queue.length}
+          </button>
+          <button
+            type="button"
+            className={tab === 'liked' ? 'is-active' : ''}
+            onClick={() => setTab('liked')}
+          >
+            Liked · {music.liked.length}
+          </button>
+          <button
+            type="button"
+            className={tab === 'playlists' ? 'is-active' : ''}
+            onClick={() => setTab('playlists')}
+          >
+            Playlists · {music.playlists.length}
+          </button>
+          <button
+            type="button"
+            className={tab === 'history' ? 'is-active' : ''}
+            onClick={() => setTab('history')}
+          >
+            History · {music.history.length}
+          </button>
+        </nav>
       </header>
+
       <main className="music-main">
         <form className="music-search" onSubmit={searchMusic}>
           <Search size={16} />
-          <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search artists, songs, albums…" aria-label="Search music" />
-          <button type="submit" className="primary-btn" disabled={loading}>{loading ? 'Searching…' : 'Find music'}</button>
+          <input
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            placeholder="Search artists, songs, albums, or ambient streams…"
+            aria-label="Search music"
+          />
+          {query && (
+            <button
+              type="button"
+              className="music-search-clear"
+              onClick={() => {
+                setQuery('');
+                setTracks([]);
+                setError('');
+              }}
+              aria-label="Clear music search"
+            >
+              <X size={12} />
+            </button>
+          )}
+          <button type="submit" className="primary-btn" disabled={loading}>
+            {loading ? 'Searching…' : 'Find music'}
+          </button>
         </form>
+
         {error && <p className="inline-error music-error">{error}</p>}
+        {feedback && (
+          <div className="music-feedback-bar" role="status" aria-live="polite">
+            <Check size={12} />
+            <span>{feedback}</span>
+          </div>
+        )}
+
         {current ? (
           <section className="music-now-playing">
-            <div className="music-artwork">{current.thumbnail ? <img src={current.thumbnail} alt="" /> : <Headphones size={40} />}</div>
+            <div className="music-artwork">
+              {current.thumbnail && artworkFailedId !== current.id ? (
+                <img
+                  src={current.thumbnail}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                  onError={() => setArtworkFailedId(current.id)}
+                />
+              ) : (
+                <Headphones size={40} />
+              )}
+            </div>
+
             <div className="music-track-copy">
-              <span className="eyebrow">Now playing</span><h2>{current.title}</h2><p>{current.channelTitle}</p>
-              <div className="music-controls" aria-label="Playback controls">
-                <button type="button" onClick={() => playRelativeTrack(-1)} disabled={currentIndex <= 0} title="Previous track" aria-label="Previous track"><SkipBack size={16} /></button>
-                <button type="button" className="music-play-button" onClick={togglePlayback} title={isPlaying ? 'Pause' : 'Play'} aria-label={isPlaying ? 'Pause' : 'Play'}>{isPlaying ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
-                <button type="button" onClick={() => playRelativeTrack(1)} disabled={currentIndex < 0 || currentIndex >= visibleQueue.length - 1} title="Next track" aria-label="Next track"><SkipForward size={16} /></button>
-                <button type="button" onClick={toggleMute} title={isMuted ? 'Unmute' : 'Mute'} aria-label={isMuted ? 'Unmute' : 'Mute'}>{isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}</button>
+              <div className="music-np-top">
+                <div className="music-np-titles">
+                  <span className="eyebrow">
+                    {music.isPlaying ? 'Now playing · Continues when minimized' : 'Paused'}
+                  </span>
+                  <h2>{current.title}</h2>
+                  <p>
+                    {[current.channelTitle, current.viewCount].filter(Boolean).join(' · ')}
+                  </p>
+                </div>
+
+                <div className="music-np-actions">
+                  <button
+                    type="button"
+                    className={`icon-btn ${isCurrentLiked ? 'is-liked' : ''}`}
+                    onClick={() => {
+                      const liked = toggleMusicTrackLiked(current);
+                      showFeedback(liked ? 'Added to Liked songs' : 'Removed from Liked songs');
+                    }}
+                    title={isCurrentLiked ? 'Remove from Liked songs' : 'Save to Liked songs'}
+                    aria-label={isCurrentLiked ? 'Unlike track' : 'Like track'}
+                  >
+                    <Heart size={14} fill={isCurrentLiked ? 'currentColor' : 'none'} />
+                  </button>
+                  <button
+                    type="button"
+                    className={`secondary-btn music-mini-action ${playlistMenuOpen ? 'is-open' : ''}`}
+                    onClick={() => setPlaylistMenuOpen(v => !v)}
+                    aria-expanded={playlistMenuOpen}
+                  >
+                    <ListMusic size={12} />
+                    <span>+ Playlist</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`secondary-btn music-mini-action ${ambientAudible ? 'is-open' : ''}`}
+                    onClick={() => setTab('soundscapes')}
+                    title="Layer ambient rain, vinyl, fireplace, or brown noise"
+                  >
+                    <CloudRain size={12} />
+                    <span>{ambientAudible ? `+${activeAmbientCount} Ambient` : 'Ambience'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-btn music-mini-action"
+                    onClick={watchCurrentInTube}
+                    title="Watch video in Nexus Tube"
+                  >
+                    <Tv size={12} />
+                    <span>Video</span>
+                  </button>
+                </div>
+              </div>
+
+              {playlistMenuOpen && (
+                <div className="music-playlist-popover">
+                  {music.playlists.length > 0 && (
+                    <div className="music-playlist-picks">
+                      {music.playlists.map(pl => {
+                        const alreadyIn = pl.tracks.some(t => t.id === current.id);
+                        return (
+                          <button
+                            key={pl.id}
+                            type="button"
+                            className="music-pl-pick-btn"
+                            onClick={() => {
+                              addTrackToMusicPlaylist(pl.id, current);
+                              setPlaylistMenuOpen(false);
+                              showFeedback(`Added to "${pl.name}"`);
+                            }}
+                          >
+                            <span>{pl.name}</span>
+                            <small>{alreadyIn ? 'Saved' : `${pl.tracks.length} tracks`}</small>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <form className="music-pl-inline-form" onSubmit={handleCreatePlaylist}>
+                    <input
+                      value={newPlaylistName}
+                      onChange={e => setNewPlaylistName(e.target.value)}
+                      placeholder="New playlist name…"
+                      aria-label="New playlist name"
+                    />
+                    <button type="submit" className="primary-btn" disabled={!newPlaylistName.trim()}>
+                      Create
+                    </button>
+                  </form>
+                </div>
+              )}
+
+              {/* Seek Scrubber / Live Progress */}
+              <div className="music-progress-row">
+                <span className="music-time-label">{formatMediaSeconds(music.currentTime)}</span>
+                {displayDuration > 0 && !isLiveStream ? (
+                  <input
+                    type="range"
+                    className="music-seek-slider"
+                    min={0}
+                    max={displayDuration}
+                    value={Math.min(music.currentTime, displayDuration)}
+                    onChange={e => seekMusicTo(Number(e.target.value))}
+                    aria-label="Seek track position"
+                  />
+                ) : (
+                  <div className="music-live-bar" aria-hidden="true">
+                    <div className="music-live-bar-fill" />
+                  </div>
+                )}
+                <span className="music-time-label">
+                  {isLiveStream ? 'LIVE' : formatMediaSeconds(displayDuration)}
+                </span>
+              </div>
+
+              {/* Transport + Shuffle + Repeat + Volume */}
+              <div className="music-transport-bar">
+                <div className="music-controls" aria-label="Playback controls">
+                  <button
+                    type="button"
+                    className={music.shuffle ? 'is-toggled' : ''}
+                    onClick={toggleMusicShuffle}
+                    title={music.shuffle ? 'Shuffle on' : 'Shuffle off'}
+                    aria-label="Toggle shuffle"
+                    aria-pressed={music.shuffle}
+                  >
+                    <Shuffle size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => stepMusicTrack(-1, 'manual')}
+                    disabled={music.queue.length <= 1 && music.repeat === 'off'}
+                    title="Previous track"
+                    aria-label="Previous track"
+                  >
+                    <SkipBack size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    className="music-play-button"
+                    onClick={toggleMusicPlayback}
+                    title={music.isPlaying ? 'Pause' : 'Play'}
+                    aria-label={music.isPlaying ? 'Pause' : 'Play'}
+                  >
+                    {music.isPlaying ? (
+                      <Pause size={17} fill="currentColor" />
+                    ) : (
+                      <Play size={17} fill="currentColor" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => stepMusicTrack(1, 'manual')}
+                    disabled={music.queue.length <= 1 && music.repeat === 'off'}
+                    title="Next track"
+                    aria-label="Next track"
+                  >
+                    <SkipForward size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    className={music.repeat !== 'off' ? 'is-toggled' : ''}
+                    onClick={cycleMusicRepeat}
+                    title={`Repeat: ${music.repeat}`}
+                    aria-label={`Repeat mode ${music.repeat}`}
+                  >
+                    {music.repeat === 'one' ? <Repeat1 size={14} /> : <Repeat size={14} />}
+                  </button>
+                </div>
+
+                <div className="music-volume-group" aria-label="Volume controls">
+                  <button
+                    type="button"
+                    className="music-mute-btn"
+                    onClick={toggleMusicMute}
+                    title={music.isMuted ? 'Unmute' : 'Mute'}
+                    aria-label={music.isMuted ? 'Unmute' : 'Mute'}
+                  >
+                    {music.isMuted || music.volume === 0 ? (
+                      <VolumeX size={15} />
+                    ) : (
+                      <Volume2 size={15} />
+                    )}
+                  </button>
+                  <input
+                    type="range"
+                    className="music-volume-slider"
+                    min={0}
+                    max={100}
+                    value={music.isMuted ? 0 : music.volume}
+                    onChange={e => setMusicVolume(Number(e.target.value))}
+                    aria-label="Audio volume"
+                  />
+                  <span className="music-vol-pct">{music.isMuted ? 0 : music.volume}%</span>
+                </div>
               </div>
             </div>
-            <div className="music-audio-shell"><iframe ref={playerRef} title={`Audio player for ${current.title}`} src={`https://www.youtube-nocookie.com/embed/${current.id}?autoplay=1&controls=0&enablejsapi=1&rel=0`} allow="autoplay; encrypted-media" /></div>
           </section>
         ) : (
-          <section className="music-hero"><div className="music-hero-orb"><Headphones size={34} /></div><span className="eyebrow">A quieter way to listen</span><h2>Find your next favorite sound.</h2><p>Search YouTube music and listen inside a focused, audio-first workspace.</p></section>
-        )}
-        <section className="music-library">
-          <div className="music-section-heading"><div><span className="eyebrow">{tracks.length ? 'Discover' : 'Your library'}</span><h3>{tracks.length ? 'Search results' : 'Recently played'}</h3></div>{history.length > 0 && <button type="button" className="music-clear" onClick={clearHistory}>Clear history</button>}</div>
-          <div className="music-track-grid">
-            {(tracks.length ? tracks : history).map(track => (
-              <button type="button" className={`music-track-card ${current?.id === track.id ? 'is-active' : ''}`} key={track.id} onClick={() => playTrack(track)}>
-                {track.thumbnail ? <img src={track.thumbnail} alt="" /> : <div className="music-thumb-fallback"><Headphones size={18} /></div>}
-                <span><strong>{track.title}</strong><small>{track.channelTitle}</small></span><Play size={13} />
+          <section className="music-hero">
+            <div className="music-hero-orb"><Headphones size={32} /></div>
+            <span className="eyebrow">Persistent desktop audio</span>
+            <h2>Start a focus stream or search any song.</h2>
+            <p>Audio keeps playing in your desktop Now Playing bar even if you minimize or close Music.</p>
+            <div className="music-hero-actions">
+              <button
+                type="button"
+                className="primary-btn music-hero-cta"
+                onClick={() => playStarterMusicStream(0)}
+              >
+                <Play size={13} fill="currentColor" /> Play Lofi Focus Radio
               </button>
-            ))}
-          </div>
-          {!tracks.length && !history.length && <p className="music-empty">Your recently played music will appear here.</p>}
-        </section>
+              <button
+                type="button"
+                className="secondary-btn music-hero-cta"
+                onClick={() => setTab('soundscapes')}
+              >
+                <CloudRain size={13} />
+                <span>
+                  {ambientAudible
+                    ? `Ambience: ${describeActiveSoundscape(soundscape)}`
+                    : 'Layer Ambient Soundscape'}
+                </span>
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* Tab Views */}
+        {tab === 'discover' && (
+          <>
+            {tracks.length > 0 && (
+              <section className="music-library">
+                <div className="music-section-heading">
+                  <div>
+                    <span className="eyebrow">Search results</span>
+                    <h3>Matches for “{query}”</h3>
+                  </div>
+                  <span className="yt-count-label">{tracks.length} tracks</span>
+                </div>
+                <div className="music-track-grid">
+                  {tracks.map(track => (
+                    <MusicTrackRow
+                      key={track.id}
+                      track={track}
+                      isActive={current?.id === track.id}
+                      isLiked={likedIds.has(track.id)}
+                      onPlay={() => playMusicTrack(track, tracks)}
+                      onQueueNext={() => {
+                        enqueueTrackNext(track);
+                        showFeedback('Queued to play next');
+                      }}
+                      onToggleLike={() => toggleMusicTrackLiked(track)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            <section className="music-library">
+              <div className="music-section-heading">
+                <div>
+                  <span className="eyebrow">Zero-search ready</span>
+                  <h3>Curated focus & ambient streams</h3>
+                </div>
+                <span className="yt-count-label">{STARTER_MUSIC_STREAMS.length} live radios</span>
+              </div>
+              <div className="music-track-grid">
+                {STARTER_MUSIC_STREAMS.map(stream => (
+                  <MusicTrackRow
+                    key={stream.id}
+                    track={stream}
+                    isActive={current?.id === stream.id}
+                    isLiked={likedIds.has(stream.id)}
+                    onPlay={() => playMusicTrack(stream, STARTER_MUSIC_STREAMS)}
+                    onQueueNext={() => {
+                      enqueueTrackNext(stream);
+                      showFeedback('Queued stream next');
+                    }}
+                    onToggleLike={() => toggleMusicTrackLiked(stream)}
+                  />
+                ))}
+              </div>
+            </section>
+          </>
+        )}
+
+        {tab === 'soundscapes' && (
+          <section className="music-library soundscape-studio">
+            <div className="soundscape-master-bar">
+              <div className="soundscape-master-info">
+                <button
+                  type="button"
+                  className={`soundscape-power-btn ${ambientAudible ? 'is-playing' : ''}`}
+                  onClick={toggleSoundscapePlaying}
+                  aria-label={ambientAudible ? 'Pause ambient soundscape' : 'Play ambient soundscape'}
+                >
+                  {ambientAudible ? (
+                    <Pause size={16} fill="currentColor" />
+                  ) : (
+                    <Play size={16} fill="currentColor" />
+                  )}
+                </button>
+                <div>
+                  <span className="eyebrow">
+                    {ambientAudible
+                      ? 'Layered Web Audio · Active underneath Music'
+                      : 'Procedural Web Audio · Zero network lag'}
+                  </span>
+                  <h3>
+                    {activeAmbientCount > 0
+                      ? describeActiveSoundscape(soundscape)
+                      : 'Blend rain, vinyl dust, fire & brown noise'}
+                  </h3>
+                </div>
+              </div>
+
+              <div className="soundscape-master-controls">
+                <label className="music-volume-group" aria-label="Master ambient volume">
+                  <Volume2 size={15} />
+                  <input
+                    type="range"
+                    className="music-volume-slider"
+                    min={0}
+                    max={100}
+                    value={soundscape.masterVolume}
+                    onChange={e => setSoundscapeMasterVolume(Number(e.target.value))}
+                  />
+                  <span className="music-vol-pct">{soundscape.masterVolume}%</span>
+                </label>
+                {activeAmbientCount > 0 && (
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={() => {
+                      clearSoundscapeLevels();
+                      showFeedback('Cleared ambient faders');
+                    }}
+                  >
+                    <RotateCcw size={12} /> Reset
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Atmosphere Presets & User Saved Mixes */}
+            <div className="soundscape-presets-block">
+              <div className="music-section-heading">
+                <div>
+                  <span className="eyebrow">1-Click Atmospheres</span>
+                  <h3>Focus presets &amp; saved mixes</h3>
+                </div>
+                <form
+                  className="music-pl-create-bar"
+                  onSubmit={e => {
+                    e.preventDefault();
+                    const created = saveCustomSoundscapeMix(newMixName);
+                    if (!created) return;
+                    setNewMixName('');
+                    showFeedback(`Saved mix "${created.name}"`);
+                  }}
+                >
+                  <input
+                    value={newMixName}
+                    onChange={e => setNewMixName(e.target.value)}
+                    placeholder="Save active faders as…"
+                    aria-label="Custom soundscape mix name"
+                  />
+                  <button
+                    type="submit"
+                    className="secondary-btn"
+                    disabled={!newMixName.trim() || activeAmbientCount === 0}
+                  >
+                    <Plus size={12} /> Save mix
+                  </button>
+                </form>
+              </div>
+
+              <div className="soundscape-preset-grid">
+                {allSoundscapePresets.map(preset => {
+                  const isActivePreset =
+                    soundscape.activePresetId === preset.id && ambientAudible;
+                  return (
+                    <div
+                      key={preset.id}
+                      className={`soundscape-preset-card ${isActivePreset ? 'is-active' : ''}`}
+                    >
+                      <button
+                        type="button"
+                        className="soundscape-preset-trigger"
+                        onClick={() => applySoundscapePreset(preset.id)}
+                      >
+                        <strong>{preset.name}</strong>
+                        <small>{preset.subtitle}</small>
+                      </button>
+                      {!preset.isBuiltIn && (
+                        <button
+                          type="button"
+                          className="icon-btn soundscape-preset-del"
+                          onClick={() => {
+                            deleteCustomSoundscapeMix(preset.id);
+                            showFeedback(`Removed mix "${preset.name}"`);
+                          }}
+                          title={`Delete ${preset.name}`}
+                          aria-label={`Delete mix ${preset.name}`}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 6 Individual Procedural Channel Faders */}
+            <div className="soundscape-channels-block">
+              <div className="music-section-heading">
+                <div>
+                  <span className="eyebrow">Individual Channels</span>
+                  <h3>Procedural soundscape faders</h3>
+                </div>
+                <span className="yt-count-label">
+                  {activeAmbientCount} of {SOUNDSCAPE_CHANNELS.length} active
+                </span>
+              </div>
+
+              <div className="soundscape-channels-grid">
+                {SOUNDSCAPE_CHANNELS.map(ch => {
+                  const Icon = SOUNDSCAPE_CHANNEL_ICONS[ch.id];
+                  const level = soundscape.levels[ch.id];
+                  const isChannelActive = level > 0;
+                  return (
+                    <div
+                      key={ch.id}
+                      className={`soundscape-channel-card ${
+                        isChannelActive ? 'is-active' : ''
+                      }`}
+                    >
+                      <div className="sc-channel-top">
+                        <button
+                          type="button"
+                          className={`sc-channel-icon-btn ${
+                            isChannelActive ? 'is-lit' : ''
+                          }`}
+                          onClick={() => toggleSoundscapeLayer(ch.id)}
+                          title={isChannelActive ? `Mute ${ch.name}` : `Enable ${ch.name}`}
+                          aria-label={isChannelActive ? `Mute ${ch.name}` : `Enable ${ch.name}`}
+                          aria-pressed={isChannelActive}
+                        >
+                          <Icon size={16} />
+                        </button>
+                        <div className="sc-channel-copy">
+                          <strong>{ch.name}</strong>
+                          <small>{ch.subtitle}</small>
+                        </div>
+                        <span className="sc-channel-pct">
+                          {isChannelActive ? `${level}%` : 'Off'}
+                        </span>
+                      </div>
+
+                      <input
+                        type="range"
+                        className="sc-channel-slider"
+                        min={0}
+                        max={100}
+                        value={level}
+                        onChange={e => setSoundscapeLayerLevel(ch.id, Number(e.target.value))}
+                        aria-label={`${ch.name} volume`}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {tab === 'queue' && (
+          <section className="music-library">
+            <div className="music-section-heading">
+              <div>
+                <span className="eyebrow">Playback order</span>
+                <h3>Up next queue</h3>
+              </div>
+              <span className="yt-count-label">{music.queue.length} in queue</span>
+            </div>
+            <div className="music-queue-list">
+              {music.queue.map((track, idx) => (
+                <div
+                  key={track.id}
+                  className={`music-queue-row ${current?.id === track.id ? 'is-active' : ''}`}
+                >
+                  <span className="music-queue-index">{idx + 1}</span>
+                  <button
+                    type="button"
+                    className="music-queue-main"
+                    onClick={() => playMusicTrack(track, music.queue)}
+                  >
+                    <strong>{track.title}</strong>
+                    <small>
+                      {[track.channelTitle, track.duration].filter(Boolean).join(' · ')}
+                    </small>
+                  </button>
+                  <div className="music-queue-actions">
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      disabled={idx === 0}
+                      onClick={() => moveQueueTrack(idx, -1)}
+                      title="Move up"
+                      aria-label={`Move ${track.title} up`}
+                    >
+                      <ChevronUp size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      disabled={idx === music.queue.length - 1}
+                      onClick={() => moveQueueTrack(idx, 1)}
+                      title="Move down"
+                      aria-label={`Move ${track.title} down`}
+                    >
+                      <ChevronDown size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => removeQueueTrack(track.id)}
+                      title="Remove from queue"
+                      aria-label={`Remove ${track.title} from queue`}
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {!music.queue.length && (
+                <p className="music-empty">Your playback queue is empty. Pick a starter stream or search above.</p>
+              )}
+            </div>
+          </section>
+        )}
+
+        {tab === 'liked' && (
+          <section className="music-library">
+            <div className="music-section-heading">
+              <div>
+                <span className="eyebrow">Saved favorites</span>
+                <h3>Liked songs</h3>
+              </div>
+              {music.liked.length > 0 && (
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => playMusicTrack(music.liked[0], music.liked)}
+                >
+                  <Play size={12} fill="currentColor" /> Play all
+                </button>
+              )}
+            </div>
+            <div className="music-track-grid">
+              {music.liked.map(track => (
+                <MusicTrackRow
+                  key={track.id}
+                  track={track}
+                  isActive={current?.id === track.id}
+                  isLiked={true}
+                  onPlay={() => playMusicTrack(track, music.liked)}
+                  onQueueNext={() => {
+                    enqueueTrackNext(track);
+                    showFeedback('Queued to play next');
+                  }}
+                  onToggleLike={() => toggleMusicTrackLiked(track)}
+                />
+              ))}
+            </div>
+            {!music.liked.length && (
+              <p className="music-empty">Tap the heart icon on any track or stream to save it here.</p>
+            )}
+          </section>
+        )}
+
+        {tab === 'playlists' && (
+          <section className="music-library">
+            <div className="music-section-heading">
+              <div>
+                <span className="eyebrow">Custom collections</span>
+                <h3>Playlists</h3>
+              </div>
+              <form className="music-pl-create-bar" onSubmit={handleCreatePlaylist}>
+                <input
+                  value={newPlaylistName}
+                  onChange={e => setNewPlaylistName(e.target.value)}
+                  placeholder="New playlist title…"
+                  aria-label="Create new playlist"
+                />
+                <button type="submit" className="secondary-btn" disabled={!newPlaylistName.trim()}>
+                  <Plus size={12} /> New playlist
+                </button>
+              </form>
+            </div>
+
+            {music.playlists.length > 0 ? (
+              <div className="music-playlists-layout">
+                <aside className="music-pl-sidebar">
+                  {music.playlists.map(pl => (
+                    <button
+                      key={pl.id}
+                      type="button"
+                      className={`music-pl-nav-btn ${activePlaylist?.id === pl.id ? 'is-active' : ''}`}
+                      onClick={() => setSelectedPlaylistId(pl.id)}
+                    >
+                      <strong>{pl.name}</strong>
+                      <small>{pl.tracks.length} tracks</small>
+                    </button>
+                  ))}
+                </aside>
+
+                {activePlaylist && (
+                  <div className="music-pl-detail">
+                    <div className="music-pl-detail-head">
+                      <div>
+                        <h4>{activePlaylist.name}</h4>
+                        <span className="yt-count-label">{activePlaylist.tracks.length} tracks</span>
+                      </div>
+                      <div className="music-pl-detail-actions">
+                        {current && !activePlaylist.tracks.some(t => t.id === current.id) && (
+                          <button
+                            type="button"
+                            className="secondary-btn"
+                            onClick={() => {
+                              addTrackToMusicPlaylist(activePlaylist.id, current);
+                              showFeedback(`Added current track to "${activePlaylist.name}"`);
+                            }}
+                          >
+                            <Plus size={12} /> Add playing track
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="primary-btn"
+                          disabled={activePlaylist.tracks.length === 0}
+                          onClick={() => playMusicPlaylist(activePlaylist.id)}
+                        >
+                          <Play size={12} fill="currentColor" /> Play playlist
+                        </button>
+                        <button
+                          type="button"
+                          className="settings-action danger"
+                          onClick={() => deleteMusicPlaylist(activePlaylist.id)}
+                          aria-label={`Delete playlist ${activePlaylist.name}`}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="music-queue-list">
+                      {activePlaylist.tracks.map((track, idx) => (
+                        <div
+                          key={track.id}
+                          className={`music-queue-row ${current?.id === track.id ? 'is-active' : ''}`}
+                        >
+                          <span className="music-queue-index">{idx + 1}</span>
+                          <button
+                            type="button"
+                            className="music-queue-main"
+                            onClick={() => playMusicTrack(track, activePlaylist.tracks)}
+                          >
+                            <strong>{track.title}</strong>
+                            <small>{track.channelTitle}</small>
+                          </button>
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            onClick={() => removeTrackFromMusicPlaylist(activePlaylist.id, track.id)}
+                            title="Remove from playlist"
+                            aria-label={`Remove ${track.title} from ${activePlaylist.name}`}
+                          >
+                            <X size={13} />
+                          </button>
+                        </div>
+                      ))}
+                      {activePlaylist.tracks.length === 0 && (
+                        <p className="music-empty">
+                          No tracks in this playlist yet. Use “+ Playlist” on any playing track.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="music-empty">
+                Create a playlist above to group tracks for deep work, reading, or late-night sessions.
+              </p>
+            )}
+          </section>
+        )}
+
+        {tab === 'history' && (
+          <section className="music-library">
+            <div className="music-section-heading">
+              <div>
+                <span className="eyebrow">Your library</span>
+                <h3>Recently played</h3>
+              </div>
+              {music.history.length > 0 && (
+                <button type="button" className="music-clear" onClick={clearMusicHistory}>
+                  Clear history
+                </button>
+              )}
+            </div>
+            <div className="music-track-grid">
+              {music.history.map(track => (
+                <MusicTrackRow
+                  key={track.id}
+                  track={track}
+                  isActive={current?.id === track.id}
+                  isLiked={likedIds.has(track.id)}
+                  onPlay={() => playMusicTrack(track, music.history)}
+                  onQueueNext={() => {
+                    enqueueTrackNext(track);
+                    showFeedback('Queued to play next');
+                  }}
+                  onToggleLike={() => toggleMusicTrackLiked(track)}
+                />
+              ))}
+            </div>
+            {!music.history.length && (
+              <p className="music-empty">Your recently played music will appear here.</p>
+            )}
+          </section>
+        )}
       </main>
-      <footer className="web-app-footer"><span>Audio playback uses YouTube’s supported embedded player; no video is shown in the workspace.</span></footer>
+
+      <footer className="web-app-footer">
+        <span>Background audio continues in the desktop Now Playing bar when minimized or closed.</span>
+      </footer>
     </div>
   );
 }
 
-function YouTubeVideoCard({ item, activeId, onPlay }: { item: YouTubeVideo; activeId?: string; onPlay: (item: YouTubeVideo) => void }) {
+function MusicTrackRow({
+  track,
+  isActive,
+  isLiked,
+  onPlay,
+  onQueueNext,
+  onToggleLike,
+}: {
+  track: MediaTrack;
+  isActive: boolean;
+  isLiked: boolean;
+  onPlay: () => void;
+  onQueueNext: () => void;
+  onToggleLike: () => void;
+}) {
+  const [imgFailed, setImgFailed] = useState(false);
   return (
-    <button type="button" className={`youtube-video-card ${activeId === item.id ? 'is-active' : ''}`} onClick={() => onPlay(item)}>
-      {item.thumbnail ? <img src={item.thumbnail} alt="" /> : <div className="youtube-thumb-fallback"><Play size={14} /></div>}
-      <span><strong>{item.title}</strong><small>{item.channelTitle}</small></span>
-    </button>
+    <div className={`music-track-card ${isActive ? 'is-active' : ''}`}>
+      <button type="button" className="music-track-card-play" onClick={onPlay}>
+        {track.thumbnail && !imgFailed ? (
+          <img
+            src={track.thumbnail}
+            alt=""
+            referrerPolicy="no-referrer"
+            onError={() => setImgFailed(true)}
+          />
+        ) : (
+          <div className="music-thumb-fallback"><Headphones size={18} /></div>
+        )}
+        <span>
+          <strong>{track.title}</strong>
+          <small>
+            {[track.channelTitle, track.duration, track.viewCount].filter(Boolean).join(' · ')}
+          </small>
+        </span>
+      </button>
+      <div className="music-track-card-actions">
+        <button
+          type="button"
+          className={`music-card-icon-btn ${isLiked ? 'is-liked' : ''}`}
+          onClick={onToggleLike}
+          title={isLiked ? 'Remove from Liked songs' : 'Like track'}
+          aria-label={isLiked ? `Unlike ${track.title}` : `Like ${track.title}`}
+        >
+          <Heart size={12} fill={isLiked ? 'currentColor' : 'none'} />
+        </button>
+        <button
+          type="button"
+          className="music-card-icon-btn"
+          onClick={onQueueNext}
+          title="Play next in queue"
+          aria-label={`Play ${track.title} next`}
+        >
+          <Plus size={13} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function YouTubeVideoCard({
+  item,
+  activeId,
+  isSavedLater,
+  onPlay,
+  onToggleWatchLater,
+  onListenInMusic,
+}: {
+  item: MediaTrack;
+  activeId?: string;
+  isSavedLater: boolean;
+  onPlay: (item: MediaTrack) => void;
+  onToggleWatchLater: (item: MediaTrack) => void;
+  onListenInMusic: (item: MediaTrack) => void;
+}) {
+  const [thumbFailed, setThumbFailed] = useState(false);
+  const subline = [item.channelTitle, item.viewCount].filter(Boolean).join(' · ');
+
+  return (
+    <article className={`youtube-video-card ${activeId === item.id ? 'is-active' : ''}`}>
+      <button type="button" className="yt-card-trigger" onClick={() => onPlay(item)}>
+        <span className="yt-thumb-wrap">
+          {item.thumbnail && !thumbFailed ? (
+            <img
+              src={item.thumbnail}
+              alt=""
+              referrerPolicy="no-referrer"
+              onError={() => setThumbFailed(true)}
+            />
+          ) : (
+            <span className="youtube-thumb-fallback"><Play size={16} /></span>
+          )}
+          {item.duration && <span className="yt-duration-badge">{item.duration}</span>}
+        </span>
+        <span className="yt-card-meta">
+          <strong>{item.title}</strong>
+          <small>{subline}</small>
+        </span>
+      </button>
+      <div className="yt-card-quick-actions">
+        <button
+          type="button"
+          className={`yt-card-mini-btn ${isSavedLater ? 'is-saved' : ''}`}
+          onClick={() => onToggleWatchLater(item)}
+          title={isSavedLater ? 'Saved in Watch later' : 'Save to Watch later'}
+          aria-label={isSavedLater ? `Remove ${item.title} from Watch later` : `Save ${item.title} to Watch later`}
+        >
+          {isSavedLater ? <Check size={11} /> : <Bookmark size={11} />}
+        </button>
+        <button
+          type="button"
+          className="yt-card-mini-btn"
+          onClick={() => onListenInMusic(item)}
+          title="Listen in Music"
+          aria-label={`Listen to ${item.title} in Music`}
+        >
+          <Headphones size={11} />
+        </button>
+      </div>
+    </article>
   );
 }
 
@@ -1046,13 +2516,26 @@ function BookmarksApp({ settings }: { settings?: SettingsProps }) {
 
 /* ── Settings ─────────────────────────────────────────────────────────────── */
 function SettingsApp({ settings }: { settings: SettingsProps }) {
-  const [section, setSection] = useState<'appearance' | 'desktop' | 'messages' | 'privacy' | 'backup'>('appearance');
+  const music = useSyncExternalStore(subscribeMusicState, getMusicState);
+  const [section, setSection] = useState<'appearance' | 'spaces' | 'desktop' | 'messages' | 'privacy' | 'backup'>(
+    () => settings.initialSection ?? 'appearance'
+  );
   const [backupNotice, setBackupNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [confirmFactoryReset, setConfirmFactoryReset] = useState(false);
+  const [confirmResetSpaces, setConfirmResetSpaces] = useState(false);
+  const [confirmDeleteSpaceId, setConfirmDeleteSpaceId] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (settings.initialSection) {
+      setSection(settings.initialSection);
+      settings.onInitialSectionConsumed?.();
+    }
+  }, [settings]);
 
   const nav = [
     { id: 'appearance' as const, label: 'Appearance', Icon: Palette, detail: 'Theme and wallpaper' },
+    { id: 'spaces' as const, label: 'Spaces', Icon: Layers, detail: 'Context workspaces' },
     { id: 'desktop' as const, label: 'Desktop', Icon: Monitor, detail: 'Canvas and clock' },
     { id: 'messages' as const, label: 'Desktop messages', Icon: MessageSquareQuote, detail: 'Ambient notes' },
     { id: 'privacy' as const, label: 'Privacy', Icon: Shield, detail: 'Passcode protection' },
@@ -1162,6 +2645,237 @@ function SettingsApp({ settings }: { settings: SettingsProps }) {
                 <option value="citrus">Citrus</option>
                 <option value="glacier">Glacier</option>
               </select>
+            </div>
+          </section>
+        )}
+
+        {section === 'spaces' && (
+          <section className="settings-group settings-panel">
+            <div className="settings-group-heading settings-spaces-heading">
+              <div>
+                <strong>Desktop Spaces</strong>
+                <span>
+                  Switch between focused contexts in one click from the Dock or with Alt + 1–{(settings.spaces ?? []).length || 3}
+                </span>
+              </div>
+              <div className="settings-row-actions">
+                {settings.onResetSpaces && (
+                  confirmResetSpaces ? (
+                    <>
+                      <button
+                        type="button"
+                        className="settings-action"
+                        onClick={() => setConfirmResetSpaces(false)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="settings-action danger"
+                        onClick={() => {
+                          settings.onResetSpaces?.();
+                          setConfirmResetSpaces(false);
+                        }}
+                      >
+                        Confirm reset
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      onClick={() => setConfirmResetSpaces(true)}
+                    >
+                      <RotateCcw size={12} /> Restore starter spaces
+                    </button>
+                  )
+                )}
+                {settings.onCreateSpace && (
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    onClick={settings.onCreateSpace}
+                    disabled={(settings.spaces?.length ?? 0) >= MAX_SPACES}
+                  >
+                    <Plus size={12} /> New space
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="settings-spaces-list">
+              {(settings.spaces ?? []).map((sp, idx) => {
+                const isActive = sp.id === settings.activeSpaceId;
+                const wallpaperNames: Record<string, string> = {
+                  mist: 'Soft mist',
+                  aurora: 'Aurora',
+                  dusk: 'Warm dusk',
+                  forest: 'Forest',
+                  ocean: 'Ocean glass',
+                  ember: 'Ember',
+                  lavender: 'Lavender haze',
+                  midnight: 'Midnight',
+                  rose: 'Rosewater',
+                  mono: 'Monochrome',
+                  citrus: 'Citrus',
+                  glacier: 'Glacier',
+                };
+                const wpLabel = wallpaperNames[sp.wallpaper] ?? sp.wallpaper;
+                const summary = describeSpaceSummary(sp, wpLabel, music.playlists);
+
+                return (
+                  <div
+                    key={sp.id}
+                    className={`settings-space-item ${isActive ? 'is-active' : ''}`}
+                  >
+                    <div className="settings-space-top">
+                      <div className="settings-space-id">
+                        <span className={`space-index-tile swatch-${sp.wallpaper}`}>
+                          <span>{idx + 1}</span>
+                        </span>
+                        <div className="settings-space-meta">
+                          <div className="settings-space-title-line">
+                            <input
+                              type="text"
+                              className="settings-space-name-input"
+                              value={sp.name}
+                              maxLength={40}
+                              aria-label={`Space ${idx + 1} name`}
+                              onChange={e => settings.onUpdateSpace?.(sp.id, { name: e.target.value })}
+                            />
+                            <span className="settings-meta-note">Alt + {idx + 1}</span>
+                          </div>
+                          <span>{summary}</span>
+                        </div>
+                      </div>
+
+                      <div className="settings-row-actions">
+                        {isActive ? (
+                          <span className="settings-meta-note">Active space</span>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="secondary-btn"
+                              onClick={() => settings.onCaptureCurrentIntoSpace?.(sp.id)}
+                              title="Save currently open windows into this space"
+                            >
+                              <Copy size={12} /> Capture windows
+                            </button>
+                            <button
+                              type="button"
+                              className="settings-action"
+                              onClick={() => settings.onSwitchSpace?.(sp.id)}
+                            >
+                              Switch
+                            </button>
+                          </>
+                        )}
+                        {(settings.spaces?.length ?? 0) > 1 && (
+                          <button
+                            type="button"
+                            className="settings-action danger"
+                            onClick={() => {
+                              if (confirmDeleteSpaceId === sp.id) {
+                                settings.onDeleteSpace?.(sp.id);
+                                setConfirmDeleteSpaceId(null);
+                              } else {
+                                setConfirmDeleteSpaceId(sp.id);
+                              }
+                            }}
+                            aria-label={`Delete ${sp.name}`}
+                          >
+                            {confirmDeleteSpaceId === sp.id ? 'Confirm?' : <Trash2 size={12} />}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="settings-space-controls">
+                      <label className="settings-space-field">
+                        <span>Wallpaper</span>
+                        <select
+                          value={sp.wallpaper}
+                          onChange={e =>
+                            settings.onUpdateSpace?.(sp.id, {
+                              wallpaper: e.target.value as SettingsProps['wallpaper'],
+                            })
+                          }
+                          aria-label={`Wallpaper for ${sp.name}`}
+                        >
+                          <option value="mist">Soft mist</option>
+                          <option value="aurora">Aurora</option>
+                          <option value="dusk">Warm dusk</option>
+                          <option value="forest">Forest</option>
+                          <option value="ocean">Ocean glass</option>
+                          <option value="ember">Ember</option>
+                          <option value="lavender">Lavender haze</option>
+                          <option value="midnight">Midnight</option>
+                          <option value="rose">Rosewater</option>
+                          <option value="mono">Monochrome</option>
+                          <option value="citrus">Citrus</option>
+                          <option value="glacier">Glacier</option>
+                        </select>
+                      </label>
+
+                      <label className="settings-space-field">
+                        <span>Linked audio</span>
+                        <select
+                          value={serializeAudioRuleValue(sp.audioRule)}
+                          onChange={e =>
+                            settings.onUpdateSpace?.(sp.id, {
+                              audioRule: parseAudioRuleValue(e.target.value),
+                            })
+                          }
+                          aria-label={`Audio rule for ${sp.name}`}
+                        >
+                          <option value="keep">Keep current audio</option>
+                          <option value="pause">Pause desktop music</option>
+                          <optgroup label="24/7 Focus Streams">
+                            {STARTER_MUSIC_STREAMS.map(stream => (
+                              <option key={stream.id} value={`stream:${stream.id}`}>
+                                {stream.title}
+                              </option>
+                            ))}
+                          </optgroup>
+                          {music.playlists.length > 0 && (
+                            <optgroup label="Your Playlists">
+                              {music.playlists.map(pl => (
+                                <option key={pl.id} value={`playlist:${pl.id}`}>
+                                  {pl.name} ({pl.tracks.length})
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                        </select>
+                      </label>
+                    </div>
+
+                    {settings.widgets.length > 0 && (
+                      <div className="settings-space-widgets">
+                        <span>Desktop widgets in {sp.name}</span>
+                        <div className="space-widget-toggles">
+                          {settings.widgets.map(w => {
+                            const vis = isWidgetVisibleInSpace(w, sp);
+                            return (
+                              <button
+                                key={w.id}
+                                type="button"
+                                className={`space-widget-toggle ${vis ? 'is-on' : ''}`}
+                                onClick={() => settings.onToggleWidgetInSpace?.(sp.id, w.id, !vis)}
+                                aria-pressed={vis}
+                              >
+                                {vis ? <Check size={11} /> : null}
+                                <span>{w.name}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </section>
         )}
@@ -1482,6 +3196,25 @@ const SOURCE_FILES: { key: keyof WidgetSource; label: string; hint: string }[] =
 
 const VALID_CORE_APP_IDS: CoreAppId[] = ['browser', 'youtube', 'music', 'notes', 'bookmarks', 'settings', 'widgets'];
 
+const API_CATEGORIES: readonly ('All' | ApiReferenceCategory)[] = [
+  'All',
+  'Music',
+  'Lifecycle',
+  'Theme',
+  'Storage',
+  'Navigation',
+];
+
+function openExternalUrlSafe(url: string): void {
+  const link = document.createElement('a');
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
   const [tab, setTab] = useState<'workbench' | 'library' | 'api'>(() =>
     settings.widgets.length > 0 ? 'workbench' : 'library'
@@ -1493,6 +3226,8 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [importError, setImportError] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [apiCategory, setApiCategory] = useState<'All' | ApiReferenceCategory>('All');
+  const [apiQuery, setApiQuery] = useState('');
 
   useEffect(() => {
     if (!editingId || !settings.widgets.some(w => w.id === editingId)) {
@@ -1714,6 +3449,22 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
 
   const lineCount = selected ? selected.source[activeFile].split('\n').length : 0;
 
+  const filteredApiEntries = useMemo(() => {
+    const q = apiQuery.trim().toLowerCase();
+    return WIDGET_API_ENTRIES.filter(entry => {
+      if (apiCategory !== 'All' && entry.category !== apiCategory) return false;
+      if (!q) return true;
+      return `${entry.category} ${entry.title} ${entry.signature} ${entry.description} ${entry.snippet}`
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [apiCategory, apiQuery]);
+
+  const musicApiCount = useMemo(
+    () => WIDGET_API_ENTRIES.filter(e => e.category === 'Music').length,
+    []
+  );
+
   return (
     <div className="ws-shell">
       {/* ── Top Bar ── */}
@@ -1903,7 +3654,7 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
                               settings.onOpenApp(appId as AppId);
                             }
                           }}
-                          onOpenUrl={url => window.open(url, '_blank', 'noopener,noreferrer')}
+                          onOpenUrl={openExternalUrlSafe}
                         />
                       </div>
                     </div>
@@ -2122,48 +3873,110 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
                 <span className="eyebrow">Host Bridge · window.NEXUS</span>
                 <h3>Widget API Reference</h3>
               </div>
-              <span className="count-label">Sandboxed iframe runtime</span>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => addFromTemplate('now-playing')}
+              >
+                <Headphones size={13} /> Use Now Playing template
+              </button>
             </div>
 
             <p className="ws-lead">
               Every widget runs inside an isolated iframe with <code>window.NEXUS</code> pre-injected.
-              Configuration from <code>widget.json</code> is available synchronously on <code>NEXUS.data</code>.
+              Configuration from <code>widget.json</code> is available synchronously on <code>NEXUS.data</code>,
+              and live desktop audio state &amp; transport controls are exposed on <code>NEXUS.music</code>.
             </p>
 
-            <div className="ws-api-list">
-              {WIDGET_API_ENTRIES.map(entry => (
-                <article className="ws-api-item" key={entry.id}>
-                  <div className="ws-api-head">
-                    <div>
-                      <span className="ws-api-cat">{entry.category}</span>
-                      <h4>{entry.title}</h4>
-                    </div>
-                    <div className="ws-api-btns">
-                      <button
-                        type="button"
-                        className="secondary-btn"
-                        onClick={() => copySnippet(entry.id, entry.snippet)}
-                      >
-                        {copiedId === entry.id ? <Check size={12} /> : <Copy size={12} />}
-                        {copiedId === entry.id ? 'Copied' : 'Copy'}
-                      </button>
-                      {selected && (
+            <div className="ws-api-toolbar">
+              <div className="ws-seg ws-api-cats" role="group" aria-label="Filter API categories">
+                {API_CATEGORIES.map(cat => (
+                  <button
+                    key={cat}
+                    type="button"
+                    className={apiCategory === cat ? 'is-active' : ''}
+                    onClick={() => setApiCategory(cat)}
+                  >
+                    {cat === 'All'
+                      ? `All · ${WIDGET_API_ENTRIES.length}`
+                      : cat === 'Music'
+                        ? `Music · ${musicApiCount}`
+                        : cat}
+                  </button>
+                ))}
+              </div>
+
+              <label className="sl-search ws-api-search">
+                <Search size={13} />
+                <input
+                  value={apiQuery}
+                  onChange={e => setApiQuery(e.target.value)}
+                  placeholder="Filter methods (e.g. music, setVolume, playStream)…"
+                  aria-label="Search Widget API Reference"
+                />
+                {apiQuery && (
+                  <button
+                    type="button"
+                    className="sl-search-clear"
+                    onClick={() => setApiQuery('')}
+                    aria-label="Clear API filter"
+                  >
+                    <X size={11} />
+                  </button>
+                )}
+              </label>
+            </div>
+
+            {filteredApiEntries.length === 0 ? (
+              <div className="ws-inline-empty">
+                <p>No API entries match your current filter.</p>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => {
+                    setApiCategory('All');
+                    setApiQuery('');
+                  }}
+                >
+                  Reset filter
+                </button>
+              </div>
+            ) : (
+              <div className="ws-api-list">
+                {filteredApiEntries.map(entry => (
+                  <article className="ws-api-item" key={entry.id}>
+                    <div className="ws-api-head">
+                      <div>
+                        <span className="ws-api-cat">{entry.category}</span>
+                        <h4>{entry.title}</h4>
+                      </div>
+                      <div className="ws-api-btns">
                         <button
                           type="button"
                           className="secondary-btn"
-                          onClick={() => appendSnippetToWidget(entry.snippet)}
+                          onClick={() => copySnippet(entry.id, entry.snippet)}
                         >
-                          Insert in {selected.name}
+                          {copiedId === entry.id ? <Check size={12} /> : <Copy size={12} />}
+                          {copiedId === entry.id ? 'Copied' : 'Copy'}
                         </button>
-                      )}
+                        {selected && (
+                          <button
+                            type="button"
+                            className="secondary-btn"
+                            onClick={() => appendSnippetToWidget(entry.snippet)}
+                          >
+                            Insert in {selected.name}
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <code className="ws-api-sig">{entry.signature}</code>
-                  <p>{entry.description}</p>
-                  <pre className="ws-api-pre"><code>{entry.snippet}</code></pre>
-                </article>
-              ))}
-            </div>
+                    <code className="ws-api-sig">{entry.signature}</code>
+                    <p>{entry.description}</p>
+                    <pre className="ws-api-pre"><code>{entry.snippet}</code></pre>
+                  </article>
+                ))}
+              </div>
+            )}
           </section>
         </div>
       )}

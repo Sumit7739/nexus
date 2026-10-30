@@ -8,7 +8,29 @@ import {
   sortNotesForSidebar,
   type ScratchpadNote,
 } from '../data/notes';
+import {
+  buildTrackFromVideoId,
+  extractYouTubeVideoId,
+  STARTER_MUSIC_STREAMS,
+  type MediaTrack,
+  type YouTubeSection,
+} from '../data/media';
 import { extractHostname } from '../data/shortcuts';
+import {
+  describeSpaceSummary,
+  MAX_SPACES,
+  type DesktopSpace,
+} from '../data/spaces';
+import {
+  STARTER_SOUNDSCAPE_PRESETS,
+  type SoundscapePreset,
+} from '../data/soundscape';
+import {
+  extractUncheckedTasksFromNotes,
+  formatFocusClock,
+  type FocusState,
+  type LinkedFocusTask,
+} from '../data/focus';
 import type { AppId, DesktopWindow, SnapZone } from '../window-manager/types';
 
 /* ── Types ────────────────────────────────────────────────────────────────── */
@@ -17,9 +39,12 @@ export type SpotlightFilter = 'all' | 'apps' | 'notes' | 'windows' | 'actions';
 
 export type SpotlightSectionId =
   | 'math'
+  | 'focus'
+  | 'spaces'
   | 'windows'
   | 'apps'
   | 'notes'
+  | 'media'
   | 'query'
   | 'actions';
 
@@ -38,6 +63,16 @@ export type SpotlightCommandPayload =
   | { type: 'create-note'; title?: string; checklist?: boolean }
   | { type: 'browser-search'; query: string; engine: SearchEngineId }
   | { type: 'browser-url'; url: string; title?: string }
+  | { type: 'youtube-search'; query: string }
+  | { type: 'youtube-play'; video: MediaTrack }
+  | { type: 'youtube-section'; section: YouTubeSection }
+  | { type: 'music-search'; query: string }
+  | { type: 'music-play-track'; track: MediaTrack }
+  | { type: 'music-toggle-play' }
+  | { type: 'music-next' }
+  | { type: 'music-prev' }
+  | { type: 'music-toggle-mute' }
+  | { type: 'music-play-starter' }
   | { type: 'toggle-theme' }
   | { type: 'set-wallpaper'; wallpaperId: string }
   | { type: 'next-wallpaper' }
@@ -49,7 +84,26 @@ export type SpotlightCommandPayload =
   | { type: 'open-changelog' }
   | { type: 'lock-screen' }
   | { type: 'setup-passcode' }
-  | { type: 'open-launcher' };
+  | { type: 'open-launcher' }
+  | { type: 'switch-space'; spaceId: string }
+  | { type: 'move-active-window-to-space'; spaceId: string }
+  | { type: 'create-space'; name?: string }
+  | { type: 'open-spaces-popover' }
+  | { type: 'soundscape-toggle' }
+  | { type: 'soundscape-preset'; presetId: string }
+  | { type: 'soundscape-clear' }
+  | { type: 'open-soundscapes' }
+  | {
+      type: 'focus-start';
+      durationMinutes?: number;
+      intention?: string;
+      linkedTask?: LinkedFocusTask | null;
+    }
+  | { type: 'focus-toggle-pause' }
+  | { type: 'focus-extend'; minutes: number }
+  | { type: 'focus-complete-and-check' }
+  | { type: 'focus-reset' }
+  | { type: 'open-focus-popover' };
 
 export type SpotlightIconKind =
   | 'app'
@@ -61,6 +115,13 @@ export type SpotlightIconKind =
   | 'sparkles'
   | 'globe'
   | 'external'
+  | 'youtube'
+  | 'music'
+  | 'play'
+  | 'pause'
+  | 'skip-next'
+  | 'skip-prev'
+  | 'volume'
   | 'tile-left'
   | 'tile-right'
   | 'maximize'
@@ -76,7 +137,10 @@ export type SpotlightIconKind =
   | 'download'
   | 'changelog'
   | 'lock'
-  | 'launcher';
+  | 'launcher'
+  | 'spaces'
+  | 'soundscape'
+  | 'focus';
 
 export interface SpotlightItem {
   id: string;
@@ -118,6 +182,19 @@ export interface SpotlightContext {
   hasPassword: boolean;
   versionTag: string;
   now?: number;
+  youtubeHistory?: MediaTrack[];
+  youtubeWatchLater?: MediaTrack[];
+  musicHistory?: MediaTrack[];
+  musicLiked?: MediaTrack[];
+  musicCurrent?: MediaTrack | null;
+  musicIsPlaying?: boolean;
+  musicIsMuted?: boolean;
+  spaces?: DesktopSpace[];
+  activeSpaceId?: string;
+  soundscapeIsPlaying?: boolean;
+  soundscapeSummary?: string;
+  soundscapePresets?: readonly SoundscapePreset[];
+  focusState?: FocusState;
 }
 
 export interface SpotlightResults {
@@ -550,18 +627,24 @@ function describeWindowState(win: DesktopWindow, isActive: boolean): string {
 
 const SECTION_LABELS: Record<SpotlightSectionId, string> = {
   math: 'Instant Answer',
+  focus: 'Focus Rituals',
+  spaces: 'Desktop Spaces',
   windows: 'Open Windows',
   apps: 'Applications & Shortcuts',
   notes: 'Scratchpad Notes',
+  media: 'Media & Audio',
   query: 'Web & Quick Capture',
   actions: 'Workspace Commands',
 };
 
 const SECTION_ORDER: SpotlightSectionId[] = [
   'math',
+  'focus',
+  'spaces',
   'windows',
   'apps',
   'notes',
+  'media',
   'query',
   'actions',
 ];
@@ -596,6 +679,352 @@ export function buildSpotlightResults(ctx: SpotlightContext): SpotlightResults {
           formattedValue: math.formattedValue,
         },
       });
+    }
+  }
+
+  /* 1a. Focus Sessions Tied to Scratchpad Tasks */
+  const focus = ctx.focusState;
+  const defaultFocusMins = focus?.preferences.defaultDurationMinutes ?? 25;
+
+  if (hasQuery) {
+    const focusPrefix = trimmedQuery.match(
+      /^(?:focus|pomodoro)\s+(?:(\d{1,3})\s*(?:m|min|mins)?\s+)?(.+)$/i
+    );
+    if (focusPrefix && focusPrefix[2]?.trim()) {
+      const customMins = focusPrefix[1]
+        ? Math.max(1, Math.min(180, Number(focusPrefix[1])))
+        : defaultFocusMins;
+      const customIntent = focusPrefix[2].trim();
+      candidates.push({
+        id: 'focus:prefix-start',
+        section: 'focus',
+        filterGroup: 'actions',
+        title: `Start ${customMins}m Focus: "${customIntent}"`,
+        subtitle: 'Focus Ritual · Countdown timer on Dock',
+        keywords: 'focus pomodoro timer start deep work session',
+        iconKind: 'focus',
+        actionLabel: 'Start focus',
+        score: 355,
+        command: {
+          type: 'focus-start',
+          durationMinutes: customMins,
+          intention: customIntent,
+          linkedTask: null,
+        },
+      });
+    }
+  }
+
+  const focusCommands: Array<{
+    id: string;
+    title: string;
+    subtitle: string;
+    keywords: string;
+    iconKind: SpotlightIconKind;
+    actionLabel: string;
+    defaultAllVisible: boolean;
+    baseScore: number;
+    command: SpotlightCommandPayload;
+  }> = [];
+
+  if (focus && (focus.status === 'running' || focus.status === 'paused')) {
+    const clockStr = formatFocusClock(focus.remainingSeconds);
+    focusCommands.push(
+      {
+        id: 'focus:toggle-pause',
+        title:
+          focus.status === 'running'
+            ? `Pause Focus Session (${clockStr})`
+            : `Resume Focus Session (${clockStr})`,
+        subtitle: `${focus.intention || 'Deep work session'}${
+          focus.linkedTask ? ` · ${focus.linkedTask.noteTitle}` : ''
+        }`,
+        keywords: 'focus pause resume timer pomodoro ritual countdown',
+        iconKind: focus.status === 'running' ? 'pause' : 'play',
+        actionLabel: focus.status === 'running' ? 'Pause' : 'Resume',
+        defaultAllVisible: true,
+        baseScore: 118,
+        command: { type: 'focus-toggle-pause' },
+      },
+      {
+        id: 'focus:extend-5',
+        title: 'Extend Focus Session (+5m)',
+        subtitle: `Add 5 minutes to "${focus.intention || 'Deep work session'}"`,
+        keywords: 'focus extend add 5 minutes timer pomodoro',
+        iconKind: 'focus',
+        actionLabel: '+5m',
+        defaultAllVisible: false,
+        baseScore: 114,
+        command: { type: 'focus-extend', minutes: 5 },
+      }
+    );
+    if (focus.phase === 'focus') {
+      focusCommands.push({
+        id: 'focus:complete-check',
+        title: focus.linkedTask
+          ? 'Complete Focus & Check Off Task'
+          : 'Finish Focus Block Now',
+        subtitle: focus.linkedTask
+          ? `Mark "${focus.linkedTask.text}" done in ${focus.linkedTask.noteTitle}`
+          : `Log focus session for "${focus.intention}"`,
+        keywords: 'focus complete finish check off task scratchpad done',
+        iconKind: 'checklist',
+        actionLabel: 'Complete',
+        defaultAllVisible: true,
+        baseScore: 116,
+        command: { type: 'focus-complete-and-check' },
+      });
+    }
+    focusCommands.push({
+      id: 'focus:reset',
+      title: 'End Focus Session',
+      subtitle: 'Stop timer and restore any decluttered windows',
+      keywords: 'focus stop end cancel reset timer',
+      iconKind: 'close',
+      actionLabel: 'End',
+      defaultAllVisible: false,
+      baseScore: 110,
+      command: { type: 'focus-reset' },
+    });
+  } else if (focus && focus.status === 'completed') {
+    if (focus.linkedTask) {
+      focusCommands.push({
+        id: 'focus:complete-check',
+        title: `Check Off "${focus.linkedTask.text}"`,
+        subtitle: `Completed focus block · ${focus.linkedTask.noteTitle}`,
+        keywords: 'focus check off complete task scratchpad done',
+        iconKind: 'checklist',
+        actionLabel: 'Check off',
+        defaultAllVisible: true,
+        baseScore: 118,
+        command: { type: 'focus-complete-and-check' },
+      });
+    }
+    focusCommands.push({
+      id: 'focus:reset',
+      title: 'Dismiss Completed Focus Block',
+      subtitle: 'Reset Dock focus timer for your next session',
+      keywords: 'focus dismiss reset clear done',
+      iconKind: 'focus',
+      actionLabel: 'Dismiss',
+      defaultAllVisible: true,
+      baseScore: 114,
+      command: { type: 'focus-reset' },
+    });
+  } else {
+    focusCommands.push(
+      {
+        id: 'focus:open-popover',
+        title: 'Open Focus Rituals',
+        subtitle: 'Pick a Scratchpad task, pair ambience, and start a focus timer',
+        keywords: 'focus ritual timer pomodoro scratchpad task deep work',
+        iconKind: 'focus',
+        actionLabel: 'Open',
+        defaultAllVisible: true,
+        baseScore: 112,
+        command: { type: 'open-focus-popover' },
+      },
+      {
+        id: 'focus:start-25',
+        title: 'Start 25m Focus Session',
+        subtitle: 'Pomodoro ritual · Countdown in Dock',
+        keywords: 'focus start 25 pomodoro timer deep work',
+        iconKind: 'focus',
+        actionLabel: 'Start 25m',
+        defaultAllVisible: false,
+        baseScore: 110,
+        command: { type: 'focus-start', durationMinutes: 25 },
+      },
+      {
+        id: 'focus:start-50',
+        title: 'Start 50m Deep Focus Block',
+        subtitle: 'Extended deep work session · Countdown in Dock',
+        keywords: 'focus start 50 deep work block timer',
+        iconKind: 'focus',
+        actionLabel: 'Start 50m',
+        defaultAllVisible: false,
+        baseScore: 109,
+        command: { type: 'focus-start', durationMinutes: 50 },
+      }
+    );
+  }
+
+  for (const fc of focusCommands) {
+    if (!hasQuery && ctx.filter === 'all' && !fc.defaultAllVisible) continue;
+    const score = hasQuery
+      ? scoreQueryMatch(trimmedQuery, fc.title, fc.subtitle, fc.keywords)
+      : fc.baseScore;
+    if (score > 0) {
+      candidates.push({
+        id: fc.id,
+        section: 'focus',
+        filterGroup: 'actions',
+        title: fc.title,
+        subtitle: fc.subtitle,
+        keywords: fc.keywords,
+        iconKind: fc.iconKind,
+        actionLabel: fc.actionLabel,
+        score,
+        command: fc.command,
+      });
+    }
+  }
+
+  /* Index Unchecked Scratchpad Tasks as 1-Click Focus Targets */
+  const uncheckedTasks = extractUncheckedTasksFromNotes(ctx.notes, 16);
+  uncheckedTasks.forEach((task, idx) => {
+    const isDefaultVisible =
+      (!focus || focus.status === 'idle') && idx < 2 && ctx.filter !== 'apps' && ctx.filter !== 'windows';
+    if (!hasQuery && ctx.filter === 'all' && !isDefaultVisible) return;
+
+    const title = `Focus on: ${task.text}`;
+    const subtitle = `Scratchpad · ${task.noteTitle} · ${defaultFocusMins}m ritual`;
+    const score = hasQuery
+      ? scoreQueryMatch(
+          trimmedQuery,
+          title,
+          subtitle,
+          `focus task todo checklist pomodoro ${task.text} ${task.noteTitle}`
+        )
+      : 111 - idx;
+
+    if (score > 0) {
+      candidates.push({
+        id: `focus:task:${task.id}`,
+        section: 'focus',
+        filterGroup: 'notes',
+        title,
+        subtitle,
+        keywords: `focus task scratchpad ${task.text}`,
+        iconKind: 'focus',
+        actionLabel: `Focus ${defaultFocusMins}m`,
+        score,
+        command: {
+          type: 'focus-start',
+          durationMinutes: defaultFocusMins,
+          intention: task.text,
+          linkedTask: {
+            noteId: task.noteId,
+            noteTitle: task.noteTitle,
+            lineIndex: task.lineIndex,
+            text: task.text,
+          },
+        },
+      });
+    }
+  });
+
+  /* 1b. Desktop Spaces (1-Click Context Switching & Window Transfer) */
+  const spacesList = ctx.spaces ?? [];
+  const activeSpaceWindow = ctx.windows.find(
+    (w) => w.id === ctx.activeWindowId && w.status !== 'minimized'
+  );
+
+  if (spacesList.length > 0) {
+    spacesList.forEach((space, idx) => {
+      const isCurrent = space.id === ctx.activeSpaceId;
+      const wpName = ctx.wallpapers.find((w) => w.id === space.wallpaper)?.name ?? space.wallpaper;
+      const summary = describeSpaceSummary(space, wpName);
+      const subtitle = isCurrent ? `Current space · ${summary}` : summary;
+      const score = hasQuery
+        ? scoreQueryMatch(
+            trimmedQuery,
+            `Space ${idx + 1}: ${space.name}`,
+            subtitle,
+            `space context desktop workspace switch ${space.name} ${space.description} ${wpName}`
+          )
+        : 108 - idx;
+
+      if (score > 0) {
+        candidates.push({
+          id: `space:switch:${space.id}`,
+          section: 'spaces',
+          filterGroup: 'windows',
+          title: space.name,
+          subtitle,
+          keywords: `space switch desktop context ${space.name}`,
+          iconKind: 'spaces',
+          wallpaperSwatchId: space.wallpaper,
+          shortcutKeys: ['Alt', String(idx + 1)],
+          actionLabel: isCurrent ? 'Current' : 'Switch',
+          score: hasQuery ? score + (isCurrent ? 2 : 10) : score,
+          command: { type: 'switch-space', spaceId: space.id },
+        });
+      }
+
+      if (activeSpaceWindow && !isCurrent) {
+        const moveTitle = `Move ${activeSpaceWindow.title} to ${space.name}`;
+        const moveSub = `Transfer active window to Space ${idx + 1}`;
+        const moveScore = hasQuery
+          ? scoreQueryMatch(
+              trimmedQuery,
+              moveTitle,
+              moveSub,
+              `move send transfer window space ${space.name} ${activeSpaceWindow.title}`
+            )
+          : 0;
+        if (moveScore > 0 || (!hasQuery && ctx.filter === 'windows')) {
+          candidates.push({
+            id: `space:move-win:${space.id}`,
+            section: 'spaces',
+            filterGroup: 'windows',
+            title: moveTitle,
+            subtitle: moveSub,
+            keywords: `move window space ${space.name}`,
+            iconKind: 'spaces',
+            actionLabel: 'Move',
+            score: hasQuery ? moveScore : 58 - idx,
+            command: { type: 'move-active-window-to-space', spaceId: space.id },
+          });
+        }
+      }
+    });
+
+    if (spacesList.length < MAX_SPACES) {
+      const spacePrefixMatch = hasQuery
+        ? trimmedQuery.match(/^(?:new\s+space|create\s+space|space)\s+(.+)$/i)
+        : null;
+      const customSpaceName = spacePrefixMatch?.[1]?.trim();
+
+      if (customSpaceName && !spacesList.some((s) => s.name.toLowerCase() === customSpaceName.toLowerCase())) {
+        candidates.push({
+          id: 'space:create-named',
+          section: 'spaces',
+          filterGroup: 'actions',
+          title: `Create Space "${customSpaceName}"`,
+          subtitle: 'Save current windows, split layout, and wallpaper as a new Space',
+          keywords: 'new space create context desktop',
+          iconKind: 'spaces',
+          actionLabel: 'Create space',
+          score: 310,
+          command: { type: 'create-space', name: customSpaceName },
+        });
+      } else {
+        const createScore = hasQuery
+          ? scoreQueryMatch(
+              trimmedQuery,
+              'Create New Desktop Space',
+              'Save current open windows & wallpaper as a switchable Space',
+              'new space create add workspace context'
+            )
+          : ctx.filter === 'windows' || ctx.filter === 'actions'
+            ? 56
+            : 0;
+        if (createScore > 0) {
+          candidates.push({
+            id: 'space:create',
+            section: 'spaces',
+            filterGroup: 'actions',
+            title: 'Create New Desktop Space',
+            subtitle: 'Save current open windows & wallpaper as a switchable Space',
+            keywords: 'new space create add workspace context',
+            iconKind: 'spaces',
+            actionLabel: 'Create',
+            score: createScore,
+            command: { type: 'create-space' },
+          });
+        }
+      }
     }
   }
 
@@ -786,13 +1215,17 @@ export function buildSpotlightResults(ctx: SpotlightContext): SpotlightResults {
         ? 'scratchpad markdown todo checklist memo editor'
         : app.id === 'browser'
           ? 'web internet search gemini tabs url'
-          : app.id === 'bookmarks'
-            ? 'shortcuts links bookmarks saved urls'
-            : app.id === 'widgets'
-              ? 'studio custom html css js code widget'
-              : app.id === 'settings'
-                ? 'preferences theme wallpaper privacy backup'
-                : `${host} ${app.shortcut?.url ?? ''} shortcut`;
+          : app.id === 'youtube'
+            ? 'video tube watch stream player watch later'
+            : app.id === 'music'
+              ? 'audio songs lofi radio playlists headphones queue'
+              : app.id === 'bookmarks'
+                ? 'shortcuts links bookmarks saved urls'
+                : app.id === 'widgets'
+                  ? 'studio custom html css js code widget'
+                  : app.id === 'settings'
+                    ? 'preferences theme wallpaper privacy backup'
+                    : `${host} ${app.shortcut?.url ?? ''} shortcut`;
 
     const score = hasQuery
       ? scoreQueryMatch(trimmedQuery, app.name, app.description, extraKeywords)
@@ -907,6 +1340,254 @@ export function buildSpotlightResults(ctx: SpotlightContext): SpotlightResults {
         command: nc.command,
       });
     }
+  }
+
+  /* 4b. Media & Persistent Audio (Transport, Watch Later, Liked, History & Streams) */
+  const mediaActions: Array<{
+    id: string;
+    title: string;
+    subtitle: string;
+    keywords: string;
+    iconKind: SpotlightIconKind;
+    actionLabel: string;
+    defaultAllVisible: boolean;
+    command: SpotlightCommandPayload;
+  }> = [];
+
+  if (ctx.musicCurrent) {
+    mediaActions.push(
+      {
+        id: 'media:music-toggle',
+        title: ctx.musicIsPlaying ? 'Pause Music Playback' : 'Resume Music Playback',
+        subtitle: `${ctx.musicCurrent.title} · ${ctx.musicCurrent.channelTitle}`,
+        keywords: 'music audio pause play resume toggle now playing',
+        iconKind: ctx.musicIsPlaying ? 'pause' : 'play',
+        actionLabel: ctx.musicIsPlaying ? 'Pause' : 'Resume',
+        defaultAllVisible: true,
+        command: { type: 'music-toggle-play' },
+      },
+      {
+        id: 'media:music-next',
+        title: 'Next Music Track',
+        subtitle: `Skip from ${ctx.musicCurrent.title}`,
+        keywords: 'music next skip forward track queue audio',
+        iconKind: 'skip-next',
+        actionLabel: 'Skip',
+        defaultAllVisible: false,
+        command: { type: 'music-next' },
+      },
+      {
+        id: 'media:music-prev',
+        title: 'Previous Music Track',
+        subtitle: 'Return to previous track in queue',
+        keywords: 'music previous back track queue audio',
+        iconKind: 'skip-prev',
+        actionLabel: 'Back',
+        defaultAllVisible: false,
+        command: { type: 'music-prev' },
+      },
+      {
+        id: 'media:music-mute',
+        title: ctx.musicIsMuted ? 'Unmute Music Audio' : 'Mute Music Audio',
+        subtitle: `${ctx.musicCurrent.title}`,
+        keywords: 'music mute unmute volume silence audio',
+        iconKind: 'volume',
+        actionLabel: ctx.musicIsMuted ? 'Unmute' : 'Mute',
+        defaultAllVisible: false,
+        command: { type: 'music-toggle-mute' },
+      }
+    );
+  } else {
+    mediaActions.push({
+      id: 'media:music-starter',
+      title: 'Play Lofi Focus Radio',
+      subtitle: 'Music · Start 24/7 background focus stream on desktop',
+      keywords: 'play lofi focus radio music ambient stream study beats',
+      iconKind: 'music',
+      actionLabel: 'Play',
+      defaultAllVisible: true,
+      command: { type: 'music-play-starter' },
+    });
+  }
+
+  /* Procedural Soundscape Mixer commands & presets */
+  mediaActions.push(
+    {
+      id: 'media:soundscape-toggle',
+      title: ctx.soundscapeIsPlaying
+        ? 'Pause Ambient Soundscape'
+        : 'Play Ambient Soundscape',
+      subtitle:
+        ctx.soundscapeSummary && ctx.soundscapeSummary !== 'No ambient layers'
+          ? `Layered Web Audio · ${ctx.soundscapeSummary}`
+          : 'Procedural rain, vinyl crackle, fireplace & brown noise',
+      keywords: 'ambient soundscape rain vinyl fire brown noise wind crickets focus mixer',
+      iconKind: 'soundscape',
+      actionLabel: ctx.soundscapeIsPlaying ? 'Pause' : 'Play',
+      defaultAllVisible: Boolean(ctx.soundscapeIsPlaying),
+      command: { type: 'soundscape-toggle' },
+    },
+    {
+      id: 'media:open-soundscapes',
+      title: 'Open Soundscape Mixer',
+      subtitle: 'Music · Blend 6 procedural ambient channels underneath songs',
+      keywords: 'soundscape mixer ambient rain vinyl fireplace brown noise wind crickets music',
+      iconKind: 'soundscape',
+      actionLabel: 'Open mixer',
+      defaultAllVisible: false,
+      command: { type: 'open-soundscapes' },
+    }
+  );
+
+  if (ctx.soundscapeIsPlaying) {
+    mediaActions.push({
+      id: 'media:soundscape-clear',
+      title: 'Reset & Silence Ambient Soundscape',
+      subtitle: 'Zero all ambient soundscape faders',
+      keywords: 'silence clear stop reset ambient soundscape rain noise',
+      iconKind: 'soundscape',
+      actionLabel: 'Reset',
+      defaultAllVisible: false,
+      command: { type: 'soundscape-clear' },
+    });
+  }
+
+  const scPresets = ctx.soundscapePresets ?? STARTER_SOUNDSCAPE_PRESETS;
+  for (const preset of scPresets) {
+    mediaActions.push({
+      id: `media:soundscape-preset:${preset.id}`,
+      title: `Ambient: ${preset.name}`,
+      subtitle: `Soundscape preset · ${preset.subtitle}`,
+      keywords: `ambient soundscape preset mix ${preset.name} ${preset.subtitle} rain vinyl fire brown wind crickets`,
+      iconKind: 'soundscape',
+      actionLabel: 'Blend',
+      defaultAllVisible: false,
+      command: { type: 'soundscape-preset', presetId: preset.id },
+    });
+  }
+
+  mediaActions.forEach((ma, idx) => {
+    if (!hasQuery && ctx.filter === 'all' && !ma.defaultAllVisible) return;
+    const score = hasQuery
+      ? scoreQueryMatch(trimmedQuery, ma.title, ma.subtitle, ma.keywords)
+      : 70 - idx;
+    if (score > 0) {
+      candidates.push({
+        id: ma.id,
+        section: 'media',
+        filterGroup: 'actions',
+        title: ma.title,
+        subtitle: ma.subtitle,
+        keywords: ma.keywords,
+        iconKind: ma.iconKind,
+        actionLabel: ma.actionLabel,
+        score,
+        command: ma.command,
+      });
+    }
+  });
+
+  const seenVideoIds = new Set<string>();
+  const ytWatchLater = ctx.youtubeWatchLater ?? [];
+  const ytHistory = ctx.youtubeHistory ?? [];
+
+  const indexYouTubeItem = (video: MediaTrack, sourceLabel: string, idx: number) => {
+    if (seenVideoIds.has(video.id)) return;
+    seenVideoIds.add(video.id);
+    if (!hasQuery && ctx.filter === 'all' && idx >= 2) return;
+    const subParts = [sourceLabel, video.channelTitle, video.duration].filter(Boolean);
+    const subtitle = subParts.join(' · ');
+    const score = hasQuery
+      ? scoreQueryMatch(
+          trimmedQuery,
+          video.title,
+          subtitle,
+          `youtube video watch ${sourceLabel.toLowerCase()} ${video.channelTitle}`
+        )
+      : 66 - idx;
+    if (score > 0) {
+      candidates.push({
+        id: `media:yt:${video.id}`,
+        section: 'media',
+        filterGroup: 'apps',
+        title: video.title,
+        subtitle,
+        keywords: `youtube video ${video.channelTitle}`,
+        iconKind: 'youtube',
+        actionLabel: 'Watch',
+        score,
+        command: { type: 'youtube-play', video },
+      });
+    }
+  };
+
+  ytWatchLater.forEach((v, idx) => indexYouTubeItem(v, 'Watch later', idx));
+  ytHistory.forEach((v, idx) => indexYouTubeItem(v, 'Watched', idx + ytWatchLater.length));
+
+  const seenMusicIds = new Set<string>();
+  const musicLiked = ctx.musicLiked ?? [];
+  const musicHist = ctx.musicHistory ?? [];
+
+  const indexMusicItem = (track: MediaTrack, sourceLabel: string, idx: number) => {
+    if (seenMusicIds.has(track.id)) return;
+    seenMusicIds.add(track.id);
+    if (!hasQuery && ctx.filter === 'all' && idx >= 2) return;
+    const subParts = [sourceLabel, track.channelTitle, track.duration].filter(Boolean);
+    const subtitle = subParts.join(' · ');
+    const score = hasQuery
+      ? scoreQueryMatch(
+          trimmedQuery,
+          track.title,
+          subtitle,
+          `music audio song play ${sourceLabel.toLowerCase()} ${track.channelTitle}`
+        )
+      : 64 - idx;
+    if (score > 0) {
+      candidates.push({
+        id: `media:music:${track.id}`,
+        section: 'media',
+        filterGroup: 'apps',
+        title: track.title,
+        subtitle,
+        keywords: `music audio ${track.channelTitle}`,
+        iconKind: 'music',
+        actionLabel: 'Play audio',
+        score,
+        command: { type: 'music-play-track', track },
+      });
+    }
+  };
+
+  musicLiked.forEach((t, idx) => indexMusicItem(t, 'Liked song', idx));
+  musicHist.forEach((t, idx) => indexMusicItem(t, 'Music history', idx + musicLiked.length));
+
+  /* Also match curated starter focus streams when user types a query */
+  if (hasQuery) {
+    const streamQuery = trimmedQuery.replace(/^(?:music|play)\s+/i, '').trim() || trimmedQuery;
+    STARTER_MUSIC_STREAMS.forEach((stream) => {
+      if (seenMusicIds.has(stream.id)) return;
+      const score = scoreQueryMatch(
+        streamQuery,
+        stream.title,
+        `${stream.channelTitle} · Focus stream`,
+        `music radio stream focus ambient ${stream.description}`
+      );
+      if (score > 0) {
+        seenMusicIds.add(stream.id);
+        candidates.push({
+          id: `media:stream:${stream.id}`,
+          section: 'media',
+          filterGroup: 'apps',
+          title: stream.title,
+          subtitle: `Focus radio · ${stream.channelTitle}`,
+          keywords: `music stream focus ${stream.channelTitle}`,
+          iconKind: 'music',
+          actionLabel: 'Play stream',
+          score: /^(?:music|play)\s+/i.test(trimmedQuery) ? score + 110 : score,
+          command: { type: 'music-play-track', track: stream },
+        });
+      }
+    });
   }
 
   /* 5. Workspace, Theme, Wallpaper & System Commands */
@@ -1070,9 +1751,79 @@ export function buildSpotlightResults(ctx: SpotlightContext): SpotlightResults {
     }
   });
 
-  /* 6. Query-Driven Deep Actions (URL open, Gemini/Web search, Quick Note capture) */
+  /* 6. Query-Driven Deep Actions (Media Prefixes, URL open, Gemini/Web search, Quick Note capture) */
   if (hasQuery) {
+    const ytPrefixMatch = trimmedQuery.match(/^(?:yt|youtube)\s+(.+)$/i);
+    const musicPrefixMatch = trimmedQuery.match(/^(?:music|play)\s+(.+)$/i);
+
+    if (ytPrefixMatch && ytPrefixMatch[1].trim().length > 0) {
+      const ytQ = ytPrefixMatch[1].trim();
+      candidates.push({
+        id: 'query:youtube-prefix-search',
+        section: 'media',
+        filterGroup: 'apps',
+        title: `Search Nexus Tube for "${ytQ}"`,
+        subtitle: 'Nexus Tube · Search videos and channels',
+        keywords: 'youtube video search watch',
+        iconKind: 'youtube',
+        actionLabel: 'Search Tube',
+        score: 340,
+        command: { type: 'youtube-search', query: ytQ },
+      });
+    }
+
+    if (musicPrefixMatch && musicPrefixMatch[1].trim().length > 0) {
+      const mQ = musicPrefixMatch[1].trim();
+      candidates.push({
+        id: 'query:music-prefix-search',
+        section: 'media',
+        filterGroup: 'apps',
+        title: `Search Music for "${mQ}"`,
+        subtitle: 'Music · Find songs, albums, and focus streams',
+        keywords: 'music play song search audio',
+        iconKind: 'music',
+        actionLabel: 'Find music',
+        score: 340,
+        command: { type: 'music-search', query: mQ },
+      });
+    }
+
     const omnibox = classifyOmniboxInput(trimmedQuery);
+    const directVideoId =
+      omnibox?.kind === 'url'
+        ? extractYouTubeVideoId(omnibox.url)
+        : /^[a-zA-Z0-9_-]{11}$/.test(trimmedQuery)
+          ? null
+          : extractYouTubeVideoId(trimmedQuery);
+
+    if (directVideoId) {
+      const track = buildTrackFromVideoId(directVideoId);
+      candidates.push({
+        id: 'query:youtube-url-play',
+        section: 'media',
+        filterGroup: 'apps',
+        title: 'Watch Video in Nexus Tube',
+        subtitle: `YouTube ID ${directVideoId} · Play directly inside Nexus`,
+        keywords: 'youtube url video watch tube',
+        iconKind: 'youtube',
+        actionLabel: 'Watch in Tube',
+        score: 260,
+        command: { type: 'youtube-play', video: track },
+      });
+      candidates.push({
+        id: 'query:music-url-play',
+        section: 'media',
+        filterGroup: 'apps',
+        title: 'Play Audio in Background Music',
+        subtitle: `YouTube ID ${directVideoId} · Stream audio on desktop`,
+        keywords: 'music audio url youtube listen',
+        iconKind: 'music',
+        actionLabel: 'Play audio',
+        score: 245,
+        command: { type: 'music-play-track', track },
+      });
+    }
+
     if (omnibox?.kind === 'url') {
       const host = extractHostname(omnibox.url) || omnibox.url;
       candidates.push({
@@ -1128,6 +1879,32 @@ export function buildSpotlightResults(ctx: SpotlightContext): SpotlightResults {
           score: 32,
           command: { type: 'browser-search', query: cleanQuery, engine: 'web' },
         });
+        if (!ytPrefixMatch && !musicPrefixMatch && cleanQuery.length >= 2) {
+          candidates.push({
+            id: 'query:youtube-fallback-search',
+            section: 'query',
+            filterGroup: 'apps',
+            title: `Search Nexus Tube for "${cleanQuery}"`,
+            subtitle: 'Nexus Tube · Find videos to watch',
+            keywords: 'youtube video search',
+            iconKind: 'youtube',
+            actionLabel: 'Tube',
+            score: 29,
+            command: { type: 'youtube-search', query: cleanQuery },
+          });
+          candidates.push({
+            id: 'query:music-fallback-search',
+            section: 'query',
+            filterGroup: 'apps',
+            title: `Search Music for "${cleanQuery}"`,
+            subtitle: 'Music · Play audio in background',
+            keywords: 'music song audio search',
+            iconKind: 'music',
+            actionLabel: 'Music',
+            score: 28,
+            command: { type: 'music-search', query: cleanQuery },
+          });
+        }
         candidates.push({
           id: 'query:create-titled-note',
           section: 'query',

@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 import {
@@ -11,14 +12,17 @@ import {
   Check,
   CheckSquare,
   Clock,
+  CloudRain,
   Columns2,
   CornerDownLeft,
   Download,
   ExternalLink,
   FilePlus2,
   Globe2,
+  Headphones,
   History,
   Image,
+  Layers,
   LayoutGrid,
   Lock,
   Maximize2,
@@ -28,15 +32,28 @@ import {
   Move,
   PanelLeft,
   PanelRight,
+  Pause,
+  Play,
   RotateCcw,
   Search,
+  SkipBack,
+  SkipForward,
   Sparkles,
   StickyNote,
   Sun,
+  Timer,
+  Volume2,
   X,
 } from 'lucide-react';
 import type { AppDefinition } from '../apps/app-types';
 import { AppIconGraphic } from './ShortcutFavicon';
+import {
+  getMusicState,
+  readYouTubeHistory,
+  readYouTubeWatchLater,
+  subscribeMusicState,
+  type MediaTrack,
+} from '../data/media';
 import { readNotesState, type ScratchpadNote } from '../data/notes';
 import {
   buildSpotlightResults,
@@ -45,6 +62,15 @@ import {
   type SpotlightIconKind,
   type SpotlightItem,
 } from '../spotlight/spotlight-engine';
+import type { DesktopSpace } from '../data/spaces';
+import {
+  describeActiveSoundscape,
+  getAllSoundscapePresets,
+  getSoundscapeState,
+  isSoundscapeAudiblyPlaying,
+  subscribeSoundscapeState,
+} from '../data/soundscape';
+import { getFocusState, subscribeFocusState } from '../data/focus';
 import type { DesktopWindow } from '../window-manager/types';
 
 export interface SpotlightPaletteProps {
@@ -60,6 +86,8 @@ export interface SpotlightPaletteProps {
   restoreSession: boolean;
   hasPassword: boolean;
   versionTag: string;
+  spaces?: DesktopSpace[];
+  activeSpaceId?: string;
   onExecute: (command: SpotlightCommandPayload) => void;
   onClose: () => void;
 }
@@ -114,6 +142,19 @@ function SpotlightRowIcon({
         return <Globe2 size={15} strokeWidth={1.6} />;
       case 'external':
         return <ExternalLink size={15} strokeWidth={1.6} />;
+      case 'youtube':
+      case 'play':
+        return <Play size={15} strokeWidth={1.6} />;
+      case 'music':
+        return <Headphones size={15} strokeWidth={1.6} />;
+      case 'pause':
+        return <Pause size={15} strokeWidth={1.6} />;
+      case 'skip-next':
+        return <SkipForward size={15} strokeWidth={1.6} />;
+      case 'skip-prev':
+        return <SkipBack size={15} strokeWidth={1.6} />;
+      case 'volume':
+        return <Volume2 size={15} strokeWidth={1.6} />;
       case 'tile-left':
         return <PanelLeft size={15} strokeWidth={1.6} />;
       case 'tile-right':
@@ -150,6 +191,12 @@ function SpotlightRowIcon({
         return <Lock size={15} strokeWidth={1.6} />;
       case 'launcher':
         return <LayoutGrid size={15} strokeWidth={1.6} />;
+      case 'spaces':
+        return <Layers size={15} strokeWidth={1.6} />;
+      case 'soundscape':
+        return <CloudRain size={15} strokeWidth={1.6} />;
+      case 'focus':
+        return <Timer size={15} strokeWidth={1.6} />;
       default:
         return <Search size={15} strokeWidth={1.6} />;
     }
@@ -175,22 +222,33 @@ export function SpotlightPalette({
   restoreSession,
   hasPassword,
   versionTag,
+  spaces,
+  activeSpaceId,
   onExecute,
   onClose,
 }: SpotlightPaletteProps) {
+  const music = useSyncExternalStore(subscribeMusicState, getMusicState);
+  const soundscape = useSyncExternalStore(subscribeSoundscapeState, getSoundscapeState);
+  const focus = useSyncExternalStore(subscribeFocusState, getFocusState);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<SpotlightFilter>('all');
   const [activeIdx, setActiveIdx] = useState(0);
   const [notes, setNotes] = useState<ScratchpadNote[]>(() => readNotesState().notes);
+  const [youtubeHistory, setYoutubeHistory] = useState<MediaTrack[]>(readYouTubeHistory);
+  const [youtubeWatchLater, setYoutubeWatchLater] = useState<MediaTrack[]>(readYouTubeWatchLater);
   const [copiedMathValue, setCopiedMathValue] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const syncNotes = () => setNotes(readNotesState().notes);
-    window.addEventListener('storage', syncNotes);
-    return () => window.removeEventListener('storage', syncNotes);
+    const syncStorage = () => {
+      setNotes(readNotesState().notes);
+      setYoutubeHistory(readYouTubeHistory());
+      setYoutubeWatchLater(readYouTubeWatchLater());
+    };
+    window.addEventListener('storage', syncStorage);
+    return () => window.removeEventListener('storage', syncStorage);
   }, []);
 
   const results = useMemo(
@@ -211,23 +269,47 @@ export function SpotlightPalette({
         restoreSession,
         hasPassword,
         versionTag,
+        youtubeHistory,
+        youtubeWatchLater,
+        musicHistory: music.history,
+        musicLiked: music.liked,
+        musicCurrent: music.current,
+        musicIsPlaying: music.isPlaying,
+        musicIsMuted: music.isMuted,
+        spaces,
+        activeSpaceId,
+        soundscapeIsPlaying: isSoundscapeAudiblyPlaying(soundscape),
+        soundscapeSummary: describeActiveSoundscape(soundscape),
+        soundscapePresets: getAllSoundscapePresets(soundscape),
+        focusState: focus,
       }),
     [
+      activeSpaceId,
       activeWindowId,
       apps,
       arrangeMode,
       filter,
+      focus,
       hasPassword,
+      music.current,
+      music.history,
+      music.isMuted,
+      music.isPlaying,
+      music.liked,
       notes,
       query,
       restoreSession,
       showMessages,
       showSeconds,
+      soundscape,
+      spaces,
       theme,
       versionTag,
       wallpaper,
       wallpapers,
       windows,
+      youtubeHistory,
+      youtubeWatchLater,
     ]
   );
 
@@ -342,8 +424,8 @@ export function SpotlightPalette({
               setActiveIdx(0);
               setCopiedMathValue(null);
             }}
-            placeholder="Search apps, notes, open windows, commands, or calculate…"
-            aria-label="Search workspace commands, apps, and notes"
+            placeholder="Search apps, notes, media (yt / music …), windows, or calculate…"
+            aria-label="Search workspace commands, apps, media, and notes"
           />
           {query && (
             <button

@@ -5,23 +5,31 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 import {
   Bookmark,
   CheckSquare,
+  Clock3,
   Columns2,
   Compass,
+  Headphones,
+  Heart,
   LayoutGrid, Search, X, ChevronRight,
+  Link2,
   Lock, Shield, Check, Plus, Pin,
   Minimize2,
   MoreHorizontal, List, Grid2X2, Layers,
+  Pause,
+  Play,
   Settings as SettingsIcon,
+  SkipForward,
   StickyNote,
   Sun, Moon, LogOut, RefreshCw, ChevronLeft, ChevronRight as ChevronR,
   History, Sparkles, CheckCircle2, Wrench, MinusCircle, Image, ExternalLink,
-  Move, EyeOff, Code2,
+  Move, EyeOff, Code2, Timer,
 } from 'lucide-react';
 import {
   CURRENT_RELEASE,
@@ -56,6 +64,13 @@ import { readWidgets, saveWidgets } from './widgets/types';
 import type { WidgetDefinition } from './widgets/types';
 import { WidgetRuntime } from './widgets/WidgetRuntime';
 import {
+  applySoundscapePreset,
+  clearSoundscapeLevels,
+  reloadSoundscapeFromStorage,
+  stopSoundscape,
+  toggleSoundscapePlaying,
+} from './data/soundscape';
+import {
   isShortcutAppId,
   normalizeHttpUrl,
   readShortcuts,
@@ -89,13 +104,62 @@ import {
   saveNotesState,
 } from './data/notes';
 import { SpotlightPalette } from './components/SpotlightPalette';
+import { DesktopAudioPlayer } from './components/DesktopAudioPlayer';
 import type { SpotlightCommandPayload } from './spotlight/spotlight-engine';
 import { NEXUS_OPEN_APP_EVENT, type OpenAppEventDetail } from './data/context-actions';
+import {
+  enqueueMusicAction,
+  enqueueYouTubeAction,
+  getMusicState,
+  playMusicTrack,
+  playStarterMusicStream,
+  reloadMusicLibraryFromStorage,
+  stepMusicTrack,
+  stopMusic,
+  subscribeMusicState,
+  toggleMusicMute,
+  toggleMusicPlayback,
+  type MusicTab,
+  type YouTubeSection,
+} from './data/media';
 import {
   clampMenuPosition,
   computeLauncherMenuPlacement,
   tileTopTwoWindows,
 } from './desktop/menu-layout';
+import {
+  applySpaceAudioRule,
+  cloneWindowsList,
+  createDefaultSpacesState,
+  createSpaceFromCurrentDesktop,
+  isWidgetVisibleInSpace,
+  materializeSpaceWindows,
+  moveWindowToSpace,
+  readSpacesState,
+  saveSpacesState,
+  setSpaceWidgetVisibility,
+  syncLiveDesktopIntoActiveSpace,
+  type DesktopSpace,
+  type SpacesState,
+} from './data/spaces';
+import { SpacesPopover } from './components/SpacesPopover';
+import { FocusPopover } from './components/FocusPopover';
+import {
+  completeLinkedScratchpadTask,
+  consumeFocusDeclutteredWindows,
+  extendFocusSession,
+  finishFocusSessionEarly,
+  formatFocusClock,
+  getFocusState,
+  NEXUS_FOCUS_OPEN_POPOVER_EVENT,
+  reloadFocusFromStorage,
+  resetFocusSession,
+  startFocusSession,
+  subscribeFocusState,
+  toggleFocusPause,
+  type FocusAudioMode,
+  type LinkedFocusTask,
+} from './data/focus';
 
 /* ─── Constants ───────────────────────────────────────────────────────────── */
 const SETTINGS_KEY       = 'nexus.settings.v1';
@@ -524,6 +588,14 @@ interface CtxProps {
   onOpenSettings: () => void;
   hasPassword: boolean;
   onLock: () => void;
+  hasActiveAudio: boolean;
+  isPlayingAudio: boolean;
+  onToggleOrStartAudio: () => void;
+  spaces: DesktopSpace[];
+  activeSpaceId: string;
+  onSwitchSpace: (spaceId: string) => void;
+  focusLabel: string;
+  onOpenFocus: () => void;
 }
 function DesktopCtxMenu({
   x,
@@ -552,6 +624,14 @@ function DesktopCtxMenu({
   onOpenSettings,
   hasPassword,
   onLock,
+  hasActiveAudio,
+  isPlayingAudio,
+  onToggleOrStartAudio,
+  spaces,
+  activeSpaceId,
+  onSwitchSpace,
+  focusLabel,
+  onOpenFocus,
 }: CtxProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [coords, setCoords] = useState(() =>
@@ -593,6 +673,10 @@ function DesktopCtxMenu({
           <CheckSquare size={13} />
           <span>New checklist</span>
         </button>
+        <button type="button" role="menuitem" onClick={() => { onOpenFocus(); onClose(); }}>
+          <Timer size={13} />
+          <span>{focusLabel}</span>
+        </button>
         <button type="button" role="menuitem" onClick={() => { onOpenNewBrowserTab(); onClose(); }}>
           <Compass size={13} />
           <span>New browser tab</span>
@@ -600,6 +684,16 @@ function DesktopCtxMenu({
         <button type="button" role="menuitem" onClick={() => { onOpenBookmarks(); onClose(); }}>
           <Bookmark size={13} />
           <span>Add web shortcut</span>
+        </button>
+        <button type="button" role="menuitem" onClick={() => { onToggleOrStartAudio(); onClose(); }}>
+          {hasActiveAudio ? (isPlayingAudio ? <Pause size={13} /> : <Play size={13} />) : <Headphones size={13} />}
+          <span>
+            {hasActiveAudio
+              ? isPlayingAudio
+                ? 'Pause desktop music'
+                : 'Resume desktop music'
+              : 'Play focus radio'}
+          </span>
         </button>
 
         <div className="ctx-sep" role="separator" />
@@ -633,6 +727,32 @@ function DesktopCtxMenu({
         )}
 
         <div className="ctx-sep" role="separator" />
+
+        {spaces.length > 0 && (
+          <>
+            <div className="ctx-spaces-row" role="group" aria-label="Switch desktop space">
+              {spaces.map((sp, idx) => {
+                const isCurrent = sp.id === activeSpaceId;
+                return (
+                  <button
+                    key={sp.id}
+                    type="button"
+                    className={`ctx-space-btn ${isCurrent ? 'is-current' : ''}`}
+                    onClick={() => {
+                      onSwitchSpace(sp.id);
+                      onClose();
+                    }}
+                    title={`Switch to ${sp.name} (Alt+${idx + 1})`}
+                  >
+                    <span className="ctx-space-idx">{idx + 1}</span>
+                    <span>{sp.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="ctx-sep" role="separator" />
+          </>
+        )}
 
         <button type="button" role="menuitem" onClick={() => { onToggleArrange(); onClose(); }}>
           <Move size={13} />
@@ -778,6 +898,8 @@ function TrayMenu({ now, theme, hasPassword, onToggleTheme, onLock, onSetupPassw
    ROOT APP
    ════════════════════════════════════════════════════════════════════════════ */
 export function App() {
+  const music = useSyncExternalStore(subscribeMusicState, getMusicState);
+  const focus = useSyncExternalStore(subscribeFocusState, getFocusState);
   const [passwordRecord, setPasswordRecord] = useState<PasscodeRecord | null>(readPasscodeRecord);
   const [initialSplashMs] = useState<number>(getInitialSplashDelayMs);
   const [screen, setScreen] = useState<EntryScreen>(() =>
@@ -824,6 +946,27 @@ export function App() {
   const [previewWidget, setPreviewWidget] = useState<WidgetDefinition | null>(null);
   const [changelogOpen, setChangelogOpen] = useState(false);
   const [spotlightOpen, setSpotlightOpen] = useState(false);
+  const [spacesOpen, setSpacesOpen]       = useState(false);
+  const [focusOpen, setFocusOpen]         = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<
+    'appearance' | 'spaces' | 'desktop' | 'messages' | 'privacy' | 'backup' | undefined
+  >(undefined);
+  const [spacesState, setSpacesState]     = useState<SpacesState>(() => {
+    const initialPrefs = readPrefs();
+    const initialShortcuts = readShortcuts();
+    const validAppIds = new Set<string>([
+      ...APP_REGISTRY.map(a => a.id),
+      ...initialShortcuts.map(s => toShortcutAppId(s.id)),
+    ]);
+    return readSpacesState({
+      initialWallpaper: initialPrefs.wallpaper,
+      initialWindows: windowState.windows,
+      initialActiveWindowId: windowState.activeWindowId,
+      validAppIds,
+      viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 1280,
+      viewportHeight: typeof window !== 'undefined' ? window.innerHeight : 800,
+    });
+  });
 
   /* Focus restoration for modals and launcher (FR-11) */
   const restoreFocusRef = useRef<HTMLElement | null>(null);
@@ -847,6 +990,8 @@ export function App() {
   const openSpotlight = useCallback(() => {
     captureFocusOrigin();
     setMenuOpen(false);
+    setSpacesOpen(false);
+    setFocusOpen(false);
     setLauncherActionMenu(null);
     setIconActionMenu(null);
     setDockActionMenu(null);
@@ -863,6 +1008,8 @@ export function App() {
   const openLauncher = useCallback(() => {
     captureFocusOrigin();
     setSpotlightOpen(false);
+    setSpacesOpen(false);
+    setFocusOpen(false);
     setCtxMenu(null);
     setIconActionMenu(null);
     setDockActionMenu(null);
@@ -878,6 +1025,49 @@ export function App() {
     setLauncherActionMenu(null);
     if (restore) restoreFocusOrigin();
   }, [restoreFocusOrigin]);
+
+  const openSpacesPopover = useCallback(() => {
+    captureFocusOrigin();
+    setMenuOpen(false);
+    setSpotlightOpen(false);
+    setFocusOpen(false);
+    setCtxMenu(null);
+    setIconActionMenu(null);
+    setDockActionMenu(null);
+    setLauncherActionMenu(null);
+    setTrayOpen(false);
+    setSpacesOpen(true);
+  }, [captureFocusOrigin]);
+
+  const closeSpacesPopover = useCallback((restore = true) => {
+    setSpacesOpen(false);
+    if (restore) restoreFocusOrigin();
+  }, [restoreFocusOrigin]);
+
+  const openFocusPopover = useCallback(() => {
+    captureFocusOrigin();
+    setMenuOpen(false);
+    setSpotlightOpen(false);
+    setSpacesOpen(false);
+    setCtxMenu(null);
+    setIconActionMenu(null);
+    setDockActionMenu(null);
+    setLauncherActionMenu(null);
+    setTrayOpen(false);
+    setFocusOpen(true);
+  }, [captureFocusOrigin]);
+
+  const closeFocusPopover = useCallback((restore = true) => {
+    setFocusOpen(false);
+    if (restore) restoreFocusOrigin();
+  }, [restoreFocusOrigin]);
+
+  useEffect(() => {
+    const handleOpenFocusEvent = () => openFocusPopover();
+    window.addEventListener(NEXUS_FOCUS_OPEN_POPOVER_EVENT, handleOpenFocusEvent);
+    return () =>
+      window.removeEventListener(NEXUS_FOCUS_OPEN_POPOVER_EVENT, handleOpenFocusEvent);
+  }, [openFocusPopover]);
 
   useEffect(() => {
     const handleWidgetTheme = (event: Event) => {
@@ -935,6 +1125,21 @@ export function App() {
           : (wins.filter(w => w.status !== 'minimized').at(-1)?.id ?? null),
       };
     });
+    setSpacesState(prev => ({
+      ...prev,
+      spaces: prev.spaces.map(sp => {
+        const wins = sp.windows.filter(w => w.appId !== appId);
+        return wins.length === sp.windows.length
+          ? sp
+          : {
+              ...sp,
+              windows: wins,
+              activeWindowId: wins.some(w => w.id === sp.activeWindowId)
+                ? sp.activeWindowId
+                : (wins.filter(w => w.status !== 'minimized').at(-1)?.id ?? null),
+            };
+      }),
+    }));
   }, []);
 
   /* ── Splash → screen (skips wait on reduced motion or active session reload) ── */
@@ -986,6 +1191,291 @@ export function App() {
   useEffect(() => {
     persistWindowState(windowState, prefs.restoreSession);
   }, [windowState, prefs.restoreSession]);
+
+  /* Sync live desktop windows & wallpaper into the currently active Space */
+  useEffect(() => {
+    setSpacesState(prev =>
+      syncLiveDesktopIntoActiveSpace(prev, {
+        windows: windowState.windows,
+        activeWindowId: windowState.activeWindowId,
+        wallpaper: prefs.wallpaper,
+      })
+    );
+  }, [windowState.windows, windowState.activeWindowId, prefs.wallpaper]);
+
+  useEffect(() => {
+    if (isDraggingRef.current) return;
+    saveSpacesState(spacesState);
+  }, [spacesState]);
+
+  const validAppIdsSet = useMemo(
+    () =>
+      new Set<string>([
+        ...APP_REGISTRY.map(a => a.id),
+        ...shortcuts.map(s => toShortcutAppId(s.id)),
+      ]),
+    [shortcuts]
+  );
+
+  const handleSwitchSpace = useCallback(
+    (targetSpaceId: string) => {
+      if (targetSpaceId === spacesState.activeSpaceId) {
+        setSpacesOpen(false);
+        return;
+      }
+      const synced = syncLiveDesktopIntoActiveSpace(spacesState, {
+        windows: windowState.windows,
+        activeWindowId: windowState.activeWindowId,
+        wallpaper: prefs.wallpaper,
+      });
+      const target = synced.spaces.find(s => s.id === targetSpaceId);
+      if (!target) return;
+
+      const nextWinState = materializeSpaceWindows(
+        target,
+        windowState.nextId,
+        validAppIdsSet,
+        window.innerWidth,
+        window.innerHeight
+      );
+      const nextSpaces: SpacesState = {
+        ...synced,
+        activeSpaceId: target.id,
+      };
+
+      setSpacesState(nextSpaces);
+      saveSpacesState(nextSpaces);
+      setWindowState(nextWinState);
+      persistWindowCounter(nextWinState.nextId);
+      setPrefs(p => (p.wallpaper === target.wallpaper ? p : { ...p, wallpaper: target.wallpaper }));
+      setSnapPreviewZone(null);
+      setArrangeMode(false);
+      applySpaceAudioRule(target.audioRule);
+    },
+    [
+      prefs.wallpaper,
+      spacesState,
+      validAppIdsSet,
+      windowState.activeWindowId,
+      windowState.nextId,
+      windowState.windows,
+    ]
+  );
+
+  const handleCreateSpace = useCallback(
+    (customName?: string) => {
+      const createdResult = createSpaceFromCurrentDesktop(spacesState, {
+        name: customName,
+        wallpaper: prefs.wallpaper,
+        windows: windowState.windows,
+        activeWindowId: windowState.activeWindowId,
+        widgets,
+      });
+      if (!createdResult) return;
+      setSpacesState(createdResult.state);
+      saveSpacesState(createdResult.state);
+    },
+    [prefs.wallpaper, spacesState, widgets, windowState.activeWindowId, windowState.windows]
+  );
+
+  const handleUpdateSpace = useCallback(
+    (
+      spaceId: string,
+      patch: Partial<Pick<DesktopSpace, 'name' | 'description' | 'wallpaper' | 'audioRule'>>
+    ) => {
+      setSpacesState(prev => {
+        const next: SpacesState = {
+          ...prev,
+          spaces: prev.spaces.map(sp =>
+            sp.id === spaceId
+              ? {
+                  ...sp,
+                  ...patch,
+                  ...(patch.name !== undefined ? { name: patch.name.slice(0, 40) } : {}),
+                  updatedAt: Date.now(),
+                }
+              : sp
+          ),
+        };
+        saveSpacesState(next);
+        return next;
+      });
+      if (spaceId === spacesState.activeSpaceId && patch.wallpaper) {
+        setPrefs(p => ({ ...p, wallpaper: patch.wallpaper as Wallpaper }));
+      }
+      if (spaceId === spacesState.activeSpaceId && patch.audioRule) {
+        applySpaceAudioRule(patch.audioRule);
+      }
+    },
+    [spacesState.activeSpaceId]
+  );
+
+  const handleCaptureCurrentIntoSpace = useCallback(
+    (spaceId: string) => {
+      setSpacesState(prev => {
+        const next: SpacesState = {
+          ...prev,
+          spaces: prev.spaces.map(sp =>
+            sp.id === spaceId
+              ? {
+                  ...sp,
+                  windows: cloneWindowsList(windowState.windows),
+                  activeWindowId: windowState.activeWindowId,
+                  wallpaper: prefs.wallpaper,
+                  updatedAt: Date.now(),
+                }
+              : sp
+          ),
+        };
+        saveSpacesState(next);
+        return next;
+      });
+    },
+    [prefs.wallpaper, windowState.activeWindowId, windowState.windows]
+  );
+
+  const handleToggleWidgetInSpace = useCallback(
+    (spaceId: string, widgetId: string, visible: boolean) => {
+      setSpacesState(prev => {
+        const next = setSpaceWidgetVisibility(prev, spaceId, widgetId, visible);
+        saveSpacesState(next);
+        return next;
+      });
+    },
+    []
+  );
+
+  const handleDeleteSpace = useCallback(
+    (spaceId: string) => {
+      if (spacesState.spaces.length <= 1) return;
+      const remaining = spacesState.spaces.filter(sp => sp.id !== spaceId);
+      if (remaining.length === 0) return;
+
+      if (spaceId === spacesState.activeSpaceId) {
+        const fallback = remaining[0];
+        const nextWinState = materializeSpaceWindows(
+          fallback,
+          windowState.nextId,
+          validAppIdsSet,
+          window.innerWidth,
+          window.innerHeight
+        );
+        const nextSpaces: SpacesState = {
+          version: 1,
+          activeSpaceId: fallback.id,
+          spaces: remaining,
+        };
+        setSpacesState(nextSpaces);
+        saveSpacesState(nextSpaces);
+        setWindowState(nextWinState);
+        setPrefs(p => ({ ...p, wallpaper: fallback.wallpaper }));
+        applySpaceAudioRule(fallback.audioRule);
+      } else {
+        const nextSpaces: SpacesState = {
+          ...spacesState,
+          spaces: remaining,
+        };
+        setSpacesState(nextSpaces);
+        saveSpacesState(nextSpaces);
+      }
+    },
+    [spacesState, validAppIdsSet, windowState.nextId]
+  );
+
+  const handleMoveWindowToSpace = useCallback(
+    (windowId: string, targetSpaceId: string) => {
+      const moved = moveWindowToSpace(
+        spacesState,
+        windowState,
+        windowId,
+        targetSpaceId,
+        window.innerWidth,
+        window.innerHeight
+      );
+      if (!moved) return;
+      setSpacesState(moved.spacesState);
+      saveSpacesState(moved.spacesState);
+      setWindowState(moved.windowState);
+    },
+    [spacesState, windowState]
+  );
+
+  const handleResetSpaces = useCallback(() => {
+    const fresh = createDefaultSpacesState({
+      initialWallpaper: prefs.wallpaper,
+      initialWindows: windowState.windows,
+      initialActiveWindowId: windowState.activeWindowId,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    });
+    setSpacesState(fresh);
+    saveSpacesState(fresh);
+  }, [prefs.wallpaper, windowState.activeWindowId, windowState.windows]);
+
+  const handleRestoreFocusDeclutteredWindows = useCallback(() => {
+    const ids = consumeFocusDeclutteredWindows();
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    setWindowState((s) => ({
+      ...s,
+      windows: s.windows.map((w) =>
+        idSet.has(w.id) && w.status === 'minimized' ? { ...w, status: 'normal' as const } : w
+      ),
+    }));
+  }, []);
+
+  useEffect(() => {
+    if (focus.status === 'completed' && focus.declutteredWindowIds.length > 0) {
+      handleRestoreFocusDeclutteredWindows();
+    }
+  }, [focus.declutteredWindowIds.length, focus.status, handleRestoreFocusDeclutteredWindows]);
+
+  const handleStartFocusWithWorkspace = useCallback(
+    (opts: {
+      linkedTask?: LinkedFocusTask | null;
+      intention?: string;
+      durationMinutes?: number;
+      audioMode?: FocusAudioMode;
+    }) => {
+      let minimizedIds: string[] = [];
+      if (focus.preferences.declutterWindows) {
+        minimizedIds = windowState.windows
+          .filter((w) => w.status !== 'minimized' && w.appId !== 'notes')
+          .map((w) => w.id);
+        if (minimizedIds.length > 0) {
+          const minSet = new Set(minimizedIds);
+          setWindowState((s) => {
+            const nextWins = s.windows.map((w) =>
+              minSet.has(w.id) ? { ...w, status: 'minimized' as const } : w
+            );
+            const activeStillVisible = nextWins.some(
+              (w) => w.id === s.activeWindowId && w.status !== 'minimized'
+            );
+            return {
+              ...s,
+              windows: nextWins,
+              activeWindowId: activeStillVisible
+                ? s.activeWindowId
+                : (nextWins.filter((w) => w.status !== 'minimized').at(-1)?.id ?? null),
+            };
+          });
+        }
+      }
+      startFocusSession({
+        linkedTask: opts.linkedTask,
+        intention: opts.intention,
+        durationMinutes: opts.durationMinutes,
+        audioMode: opts.audioMode,
+        declutteredWindowIds: minimizedIds,
+      });
+    },
+    [focus.preferences.declutterWindows, windowState.windows]
+  );
+
+  const handleEndOrResetFocus = useCallback(() => {
+    handleRestoreFocusDeclutteredWindows();
+    resetFocusSession();
+  }, [handleRestoreFocusDeclutteredWindows]);
 
   /* Keep floating windows, snapped splits, desktop icons, and widgets reachable when viewport resizes (FR-03) */
   useEffect(() => {
@@ -1088,6 +1578,14 @@ export function App() {
           closeSpotlight(true);
           return;
         }
+        if (spacesOpen) {
+          closeSpacesPopover(true);
+          return;
+        }
+        if (focusOpen) {
+          closeFocusPopover(true);
+          return;
+        }
         if (menuOpen) {
           if (launcherActionMenu) {
             setLauncherActionMenu(null);
@@ -1110,6 +1608,29 @@ export function App() {
         e.preventDefault();
         setArrangeMode(v => !v);
         return;
+      }
+
+      /* Global Space switching shortcuts: Alt + 1..6 (or Ctrl+Alt+1..6 even inside inputs) */
+      if (e.altKey && !e.metaKey && !e.shiftKey && screen === 'desktop') {
+        const digitMatch = /^Digit([1-6])$/.exec(e.code) ?? (/^[1-6]$/.test(e.key) ? [e.key, e.key] : null);
+        if (digitMatch) {
+          const activeEl = document.activeElement as HTMLElement | null;
+          const inEditable =
+            Boolean(activeEl) &&
+            (activeEl?.tagName === 'INPUT' ||
+              activeEl?.tagName === 'TEXTAREA' ||
+              activeEl?.tagName === 'SELECT' ||
+              activeEl?.isContentEditable);
+          if (!inEditable || e.ctrlKey) {
+            const targetIdx = Number(digitMatch[1]) - 1;
+            const targetSpace = spacesState.spaces[targetIdx];
+            if (targetSpace) {
+              e.preventDefault();
+              handleSwitchSpace(targetSpace.id);
+              return;
+            }
+          }
+        }
       }
 
       /* Active window snapping shortcuts: Alt+[ (Left), Alt+] (Right), Alt+ArrowUp (Maximize), Alt+ArrowDown (Restore) */
@@ -1159,14 +1680,20 @@ export function App() {
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [arrangeMode, changelogOpen, closeLauncher, closeSpotlight, launcherActionMenu, menuOpen, openSpotlight, restoreFocusOrigin, screen, setupIntent, spotlightOpen, windowState.activeWindowId]);
+  }, [arrangeMode, changelogOpen, closeFocusPopover, closeLauncher, closeSpacesPopover, closeSpotlight, focusOpen, handleSwitchSpace, launcherActionMenu, menuOpen, openSpotlight, restoreFocusOrigin, screen, setupIntent, spacesOpen, spacesState.spaces, spotlightOpen, windowState.activeWindowId]);
 
   /* ── Window ops ──────────────────────────────────────────────────────── */
   const openApp = useCallback((appId: AppId, preferExisting = false) => {
     const def = getAppDefinition(appId, shortcuts); if (!def) return;
     setWindowState(s => {
       const isSingleInstance =
-        preferExisting || appId === 'settings' || appId === 'bookmarks' || isShortcutAppId(appId);
+        preferExisting ||
+        appId === 'settings' ||
+        appId === 'bookmarks' ||
+        appId === 'music' ||
+        appId === 'youtube' ||
+        appId === 'widgets' ||
+        isShortcutAppId(appId);
       const existing = isSingleInstance
         ? [...s.windows].reverse().find(w => w.appId === appId)
         : undefined;
@@ -1187,7 +1714,7 @@ export function App() {
       persistWindowCounter(next.nextId);
       return next;
     });
-    setMenuOpen(false); setSpotlightOpen(false); setLauncherActionMenu(null); setIconActionMenu(null); setDockActionMenu(null); setCtxMenu(null); setTrayOpen(false);
+    setMenuOpen(false); setSpotlightOpen(false); setSpacesOpen(false); setFocusOpen(false); setLauncherActionMenu(null); setIconActionMenu(null); setDockActionMenu(null); setCtxMenu(null); setTrayOpen(false);
     restoreFocusRef.current = null;
   }, [shortcuts]);
 
@@ -1212,6 +1739,22 @@ export function App() {
     openApp('browser', true);
     enqueueBrowserNavigation({ kind: 'start' });
   }, [openApp]);
+
+  const handleOpenYouTubeSection = useCallback(
+    (section: YouTubeSection) => {
+      openApp('youtube', true);
+      enqueueYouTubeAction({ kind: 'section', section });
+    },
+    [openApp]
+  );
+
+  const handleOpenMusicTab = useCallback(
+    (tab: MusicTab) => {
+      openApp('music', true);
+      enqueueMusicAction({ kind: 'tab', tab });
+    },
+    [openApp]
+  );
 
   const handleTileTopWindows = useCallback(() => {
     setWindowState((s) => tileTopTwoWindows(s, window.innerWidth, window.innerHeight));
@@ -1398,7 +1941,7 @@ export function App() {
 
   const handleLauncherKeyDown = (e: ReactKeyboardEvent<HTMLElement>) => {
     if (!visibleApps.length) return;
-    const step = prefs.menuView === 'grid' ? 3 : 1;
+    const step = prefs.menuView === 'grid' ? 4 : 1;
 
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -1433,6 +1976,11 @@ export function App() {
 
   /* ── Backup Export / Import / Factory Reset (FR-14) ──────────────────── */
   const handleExportWorkspace = useCallback(() => {
+    const syncedSpaces = syncLiveDesktopIntoActiveSpace(spacesState, {
+      windows: windowState.windows,
+      activeWindowId: windowState.activeWindowId,
+      wallpaper: prefs.wallpaper,
+    });
     const snapshot = buildWorkspaceBackup({
       preferences: prefs,
       pinnedDesktop,
@@ -1441,6 +1989,7 @@ export function App() {
       messages,
       shortcuts,
       widgets,
+      spacesState: syncedSpaces,
     });
     const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1452,7 +2001,7 @@ export function App() {
     a.click();
     document.body.removeChild(a);
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, [desktopPos, messages, pinnedDesktop, pinnedDock, prefs, shortcuts, widgets]);
+  }, [desktopPos, messages, pinnedDesktop, pinnedDock, prefs, shortcuts, spacesState, widgets, windowState.activeWindowId, windowState.windows]);
 
   const handleImportWorkspace = useCallback(
     (rawJson: string): { ok: true; summary: string } | { ok: false; error: string } => {
@@ -1476,6 +2025,13 @@ export function App() {
         setDesktopPos(backup.desktopPositions);
         setMessages(backup.messages);
         setWidgets(backup.widgets);
+        if (backup.spacesState) {
+          setSpacesState(backup.spacesState);
+          saveSpacesState(backup.spacesState);
+        }
+        reloadMusicLibraryFromStorage();
+        reloadSoundscapeFromStorage();
+        reloadFocusFromStorage();
         window.dispatchEvent(new Event('storage'));
 
         return {
@@ -1493,7 +2049,12 @@ export function App() {
   );
 
   const handleResetWorkspace = useCallback(() => {
+    stopMusic();
+    stopSoundscape();
     clearAllWorkspaceStorage();
+    reloadMusicLibraryFromStorage();
+    reloadSoundscapeFromStorage();
+    reloadFocusFromStorage();
     setPasswordRecord(null);
     setPrefs(DEFAULT_PREFS);
     setShortcuts([]);
@@ -1504,6 +2065,13 @@ export function App() {
     setWidgets([]);
     setPreviewWidget(null);
     setArrangeMode(false);
+    const freshSpaces = createDefaultSpacesState({
+      initialWallpaper: DEFAULT_PREFS.wallpaper,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    });
+    setSpacesState(freshSpaces);
+    saveSpacesState(freshSpaces);
     setWindowState(s => {
       const settingsWins = s.windows.filter(w => w.appId === 'settings');
       return {
@@ -1566,6 +2134,17 @@ export function App() {
     pinnedDesktop,
     pinnedDock,
     onTogglePin:       togglePin,
+    spaces:            spacesState.spaces,
+    activeSpaceId:     spacesState.activeSpaceId,
+    initialSection:    settingsInitialSection,
+    onInitialSectionConsumed: () => setSettingsInitialSection(undefined),
+    onSwitchSpace:     handleSwitchSpace,
+    onCreateSpace:     () => handleCreateSpace(),
+    onUpdateSpace:     handleUpdateSpace,
+    onCaptureCurrentIntoSpace: handleCaptureCurrentIntoSpace,
+    onToggleWidgetInSpace: handleToggleWidgetInSpace,
+    onDeleteSpace:     handleDeleteSpace,
+    onResetSpaces:     handleResetSpaces,
   };
 
   const handleExecuteSpotlightCommand = useCallback(
@@ -1672,6 +2251,46 @@ export function App() {
             title: cmd.title,
           });
           return;
+        case 'youtube-search':
+          openApp('youtube', true);
+          enqueueYouTubeAction({ kind: 'search', query: cmd.query });
+          return;
+        case 'youtube-play':
+          openApp('youtube', true);
+          enqueueYouTubeAction({ kind: 'play', video: cmd.video });
+          return;
+        case 'youtube-section':
+          openApp('youtube', true);
+          enqueueYouTubeAction({ kind: 'section', section: cmd.section });
+          return;
+        case 'music-search':
+          openApp('music', true);
+          enqueueMusicAction({ kind: 'search', query: cmd.query });
+          return;
+        case 'music-play-track':
+          playMusicTrack(cmd.track);
+          closeSpotlight(true);
+          return;
+        case 'music-toggle-play':
+          toggleMusicPlayback();
+          closeSpotlight(true);
+          return;
+        case 'music-next':
+          stepMusicTrack(1, 'manual');
+          closeSpotlight(true);
+          return;
+        case 'music-prev':
+          stepMusicTrack(-1, 'manual');
+          closeSpotlight(true);
+          return;
+        case 'music-toggle-mute':
+          toggleMusicMute();
+          closeSpotlight(true);
+          return;
+        case 'music-play-starter':
+          playStarterMusicStream(0);
+          closeSpotlight(true);
+          return;
         case 'toggle-theme':
           setPrefs(p => ({ ...p, theme: p.theme === 'light' ? 'dark' : 'light' }));
           closeSpotlight(true);
@@ -1730,13 +2349,89 @@ export function App() {
           setLauncherActiveIdx(0);
           setMenuOpen(true);
           return;
+        case 'switch-space':
+          handleSwitchSpace(cmd.spaceId);
+          closeSpotlight(true);
+          return;
+        case 'move-active-window-to-space':
+          if (windowState.activeWindowId) {
+            handleMoveWindowToSpace(windowState.activeWindowId, cmd.spaceId);
+          }
+          closeSpotlight(true);
+          return;
+        case 'create-space':
+          handleCreateSpace(cmd.name);
+          closeSpotlight(true);
+          return;
+        case 'open-spaces-popover':
+          setSpotlightOpen(false);
+          setSpacesOpen(true);
+          return;
+        case 'soundscape-toggle':
+          toggleSoundscapePlaying();
+          closeSpotlight(true);
+          return;
+        case 'soundscape-preset':
+          applySoundscapePreset(cmd.presetId);
+          closeSpotlight(true);
+          return;
+        case 'soundscape-clear':
+          clearSoundscapeLevels();
+          closeSpotlight(true);
+          return;
+        case 'open-soundscapes':
+          openApp('music', true);
+          enqueueMusicAction({ kind: 'tab', tab: 'soundscapes' });
+          return;
+        case 'focus-start':
+          handleStartFocusWithWorkspace({
+            durationMinutes: cmd.durationMinutes,
+            intention: cmd.intention,
+            linkedTask: cmd.linkedTask,
+          });
+          closeSpotlight(true);
+          return;
+        case 'focus-toggle-pause':
+          toggleFocusPause();
+          closeSpotlight(true);
+          return;
+        case 'focus-extend':
+          extendFocusSession(cmd.minutes);
+          closeSpotlight(true);
+          return;
+        case 'focus-complete-and-check':
+          if (focus.status === 'running' || focus.status === 'paused') {
+            finishFocusSessionEarly();
+            handleRestoreFocusDeclutteredWindows();
+          }
+          if (focus.linkedTask) {
+            completeLinkedScratchpadTask(focus.linkedTask);
+          }
+          closeSpotlight(true);
+          return;
+        case 'focus-reset':
+          handleEndOrResetFocus();
+          closeSpotlight(true);
+          return;
+        case 'open-focus-popover':
+          setSpotlightOpen(false);
+          setFocusOpen(true);
+          return;
       }
     },
     [
       closeSpotlight,
       closeWindow,
+      focus.linkedTask,
+      focus.status,
       focusWindow,
+      handleCreateSpace,
+      handleEndOrResetFocus,
       handleExportWorkspace,
+      handleMoveWindowToSpace,
+      handleRestoreFocusDeclutteredWindows,
+      handleStartFocusWithWorkspace,
+      handleSwitchSpace,
       minimizeWindow,
       openApp,
       snapWindow,
@@ -1748,6 +2443,8 @@ export function App() {
   const closeAll = () => {
     if (menuOpen) closeLauncher(false);
     if (spotlightOpen) closeSpotlight(false);
+    if (spacesOpen) closeSpacesPopover(false);
+    if (focusOpen) closeFocusPopover(false);
     setLauncherActionMenu(null); setIconActionMenu(null); setDockActionMenu(null);
     setSelectedIcon(null); setCtxMenu(null); setTrayOpen(false);
   };
@@ -1759,6 +2456,11 @@ export function App() {
   const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...(prefs.showSeconds ? { second: '2-digit' } : {}) });
   const activeDesktopMenuApp = iconActionMenu ? getAppDefinition(iconActionMenu.id, shortcuts) : undefined;
   const activeDockMenuApp = dockActionMenu ? getAppDefinition(dockActionMenu.id, shortcuts) : undefined;
+  const activeSpaceIdx = Math.max(
+    0,
+    spacesState.spaces.findIndex((s) => s.id === spacesState.activeSpaceId)
+  );
+  const activeSpace = spacesState.spaces[activeSpaceIdx] ?? spacesState.spaces[0];
   const visibleWindowCount = windowState.windows.filter((w) => w.status !== 'minimized').length;
   const minimizedWindowCount = windowState.windows.filter((w) => w.status === 'minimized').length;
   const currentMessage = prefs.showMessages && messages.length > 0
@@ -1769,7 +2471,7 @@ export function App() {
     const target = e.target as HTMLElement;
     if (
       target.closest(
-        '.desktop-icon,.wf,.app-launcher,.ctx-menu,.tray-menu,.dock,.desktop-tray,.desktop-widget,.arrange-banner,.spotlight-modal,.changelog-modal,.setup-card'
+        '.desktop-icon,.wf,.app-launcher,.spaces-popover,.focus-popover,.ctx-menu,.tray-menu,.dock,.desktop-tray,.desktop-widget,.arrange-banner,.spotlight-modal,.changelog-modal,.setup-card,.desktop-mini-player'
       )
     ) {
       return;
@@ -1780,6 +2482,8 @@ export function App() {
     setDockActionMenu(null);
     setLauncherActionMenu(null);
     setMenuOpen(false);
+    setSpacesOpen(false);
+    setFocusOpen(false);
     setTrayOpen(false);
   };
 
@@ -1796,6 +2500,9 @@ export function App() {
         <div className="wp-blob wp-blob-2" />
         <div className="wp-blob wp-blob-3" />
       </div>
+
+      {/* Persistent Desktop Now Playing Audio Runtime */}
+      <DesktopAudioPlayer onOpenMusic={() => openApp('music', true)} />
 
       {currentMessage && currentMessage.text.trim() && (
         <div className="desktop-message" key={currentMessage.id || messageIndex} aria-live="polite">
@@ -1853,7 +2560,7 @@ export function App() {
       </section>
 
       {/* ── Desktop Widgets (Interactive in normal mode, draggable/resizable in Arrange Mode) ── */}
-      {widgets.filter((widget) => widget.visible && widget.id !== previewWidget?.id).map((widget) => (
+      {widgets.filter((widget) => isWidgetVisibleInSpace(widget, activeSpace) && widget.id !== previewWidget?.id).map((widget) => (
         <section
           key={widget.id}
           className={`desktop-widget ${arrangeMode ? 'is-arranging' : ''}`}
@@ -1868,7 +2575,7 @@ export function App() {
           <WidgetRuntime
             widget={widget}
             theme={prefs.theme}
-            onOpenApp={(id) => { if (getAppDefinition(id, shortcuts)) openApp(id as AppId); }}
+            onOpenApp={(id) => { if (getAppDefinition(id, shortcuts)) openApp(id as AppId, true); }}
             onOpenUrl={openExternalUrlSafely}
           />
           {arrangeMode && (
@@ -1892,8 +2599,14 @@ export function App() {
                 <button
                   type="button"
                   className="widget-arrange-btn"
-                  onClick={() => setWidgets(prev => prev.map(w => w.id === widget.id ? { ...w, visible: false } : w))}
-                  title="Hide from desktop"
+                  onClick={() => {
+                    if (activeSpace) {
+                      handleToggleWidgetInSpace(activeSpace.id, widget.id, false);
+                    } else {
+                      setWidgets(prev => prev.map(w => w.id === widget.id ? { ...w, visible: false } : w));
+                    }
+                  }}
+                  title="Hide from this space"
                   aria-label={`Hide ${widget.name} from desktop`}
                 >
                   <EyeOff size={11} />
@@ -1924,7 +2637,7 @@ export function App() {
           <WidgetRuntime
             widget={previewWidget}
             theme={prefs.theme}
-            onOpenApp={(id) => { if (getAppDefinition(id, shortcuts)) openApp(id as AppId); }}
+            onOpenApp={(id) => { if (getAppDefinition(id, shortcuts)) openApp(id as AppId, true); }}
             onOpenUrl={openExternalUrlSafely}
           />
           <button className="widget-preview-close" onClick={() => setPreviewWidget(null)}>Close preview</button>
@@ -2120,6 +2833,17 @@ export function App() {
                               <CheckSquare size={12} />
                               <span>New checklist</span>
                             </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setLauncherActionMenu(null);
+                                openFocusPopover();
+                              }}
+                            >
+                              <Timer size={12} />
+                              <span>Focus ritual</span>
+                            </button>
                           </>
                         )}
                         {app.id === 'browser' && (
@@ -2127,6 +2851,66 @@ export function App() {
                             <Compass size={12} />
                             <span>New search tab</span>
                           </button>
+                        )}
+                        {app.id === 'youtube' && (
+                          <>
+                            <button type="button" role="menuitem" onClick={() => handleOpenYouTubeSection('watch-later')}>
+                              <Bookmark size={12} />
+                              <span>Watch later</span>
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => handleOpenYouTubeSection('history')}>
+                              <Clock3 size={12} />
+                              <span>Watch history</span>
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => handleOpenYouTubeSection('url')}>
+                              <Link2 size={12} />
+                              <span>Play from URL</span>
+                            </button>
+                          </>
+                        )}
+                        {app.id === 'music' && (
+                          <>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                if (music.current) toggleMusicPlayback();
+                                else playStarterMusicStream(0);
+                                setLauncherActionMenu(null);
+                                closeLauncher(false);
+                              }}
+                            >
+                              {music.current ? (
+                                music.isPlaying ? <Pause size={12} /> : <Play size={12} />
+                              ) : (
+                                <Headphones size={12} />
+                              )}
+                              <span>
+                                {music.current
+                                  ? music.isPlaying
+                                    ? 'Pause music'
+                                    : 'Resume music'
+                                  : 'Play focus radio'}
+                              </span>
+                            </button>
+                            {music.current && (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  stepMusicTrack(1, 'manual');
+                                  setLauncherActionMenu(null);
+                                }}
+                              >
+                                <SkipForward size={12} />
+                                <span>Next track</span>
+                              </button>
+                            )}
+                            <button type="button" role="menuitem" onClick={() => handleOpenMusicTab('liked')}>
+                              <Heart size={12} />
+                              <span>Liked songs</span>
+                            </button>
+                          </>
                         )}
                         {app.id === 'widgets' && (
                           <button
@@ -2282,6 +3066,63 @@ export function App() {
           onOpenSettings={() => openApp('settings')}
           hasPassword={Boolean(passwordRecord)}
           onLock={handleLockWorkspace}
+          hasActiveAudio={Boolean(music.current)}
+          isPlayingAudio={music.isPlaying}
+          onToggleOrStartAudio={() => {
+            if (music.current) toggleMusicPlayback();
+            else playStarterMusicStream(0);
+          }}
+          spaces={spacesState.spaces}
+          activeSpaceId={spacesState.activeSpaceId}
+          onSwitchSpace={handleSwitchSpace}
+          focusLabel={
+            focus.status === 'running' || focus.status === 'paused'
+              ? `Focus · ${formatFocusClock(focus.remainingSeconds)}`
+              : focus.status === 'completed'
+                ? 'Focus complete'
+                : 'Start focus ritual'
+          }
+          onOpenFocus={openFocusPopover}
+        />
+      )}
+
+      {/* ── Spaces Switcher Popover — centered above dock ── */}
+      {spacesOpen && (
+        <SpacesPopover
+          spaces={spacesState.spaces}
+          activeSpaceId={spacesState.activeSpaceId}
+          wallpapers={WALLPAPERS}
+          widgets={widgets}
+          onSwitchSpace={handleSwitchSpace}
+          onCreateSpace={() => handleCreateSpace()}
+          onUpdateSpace={handleUpdateSpace}
+          onCaptureCurrentIntoSpace={handleCaptureCurrentIntoSpace}
+          onToggleWidgetInSpace={handleToggleWidgetInSpace}
+          onDeleteSpace={handleDeleteSpace}
+          onOpenSpacesSettings={() => {
+            setSettingsInitialSection('spaces');
+            openApp('settings', true);
+          }}
+          onClose={() => closeSpacesPopover(true)}
+        />
+      )}
+
+      {/* ── Focus Rituals Popover — centered above dock ── */}
+      {focusOpen && (
+        <FocusPopover
+          onStartSession={(opts) => {
+            handleStartFocusWithWorkspace(opts);
+            closeFocusPopover(false);
+          }}
+          onResetOrFinishRestoreWindows={handleEndOrResetFocus}
+          onOpenNoteInScratchpad={(noteId) => {
+            const current = readNotesState();
+            saveNotesState({ ...current, activeNoteId: noteId });
+            window.dispatchEvent(new Event('storage'));
+            openApp('notes', true);
+          }}
+          onCreateChecklistNote={() => handleCreateQuickNote(true)}
+          onClose={() => closeFocusPopover(true)}
         />
       )}
 
@@ -2291,7 +3132,11 @@ export function App() {
           iconActionMenu.x,
           iconActionMenu.y,
           216,
-          activeDesktopMenuApp.id === 'notes' ? 236 : 190,
+          activeDesktopMenuApp.id === 'notes' ||
+            activeDesktopMenuApp.id === 'youtube' ||
+            activeDesktopMenuApp.id === 'music'
+            ? 258
+            : 190,
           window.innerWidth,
           window.innerHeight,
           12
@@ -2323,6 +3168,10 @@ export function App() {
                     <CheckSquare size={13} />
                     <span>New checklist</span>
                   </button>
+                  <button type="button" role="menuitem" onClick={() => { setIconActionMenu(null); openFocusPopover(); }}>
+                    <Timer size={13} />
+                    <span>Focus ritual</span>
+                  </button>
                 </>
               )}
               {iconActionMenu.id === 'browser' && (
@@ -2330,6 +3179,58 @@ export function App() {
                   <Compass size={13} />
                   <span>New search tab</span>
                 </button>
+              )}
+              {iconActionMenu.id === 'youtube' && (
+                <>
+                  <button type="button" role="menuitem" onClick={() => { handleOpenYouTubeSection('watch-later'); setIconActionMenu(null); }}>
+                    <Bookmark size={13} />
+                    <span>Watch later</span>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { handleOpenYouTubeSection('history'); setIconActionMenu(null); }}>
+                    <Clock3 size={13} />
+                    <span>Watch history</span>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { handleOpenYouTubeSection('url'); setIconActionMenu(null); }}>
+                    <Link2 size={13} />
+                    <span>Play from URL</span>
+                  </button>
+                </>
+              )}
+              {iconActionMenu.id === 'music' && (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      if (music.current) toggleMusicPlayback();
+                      else playStarterMusicStream(0);
+                      setIconActionMenu(null);
+                    }}
+                  >
+                    {music.current ? (
+                      music.isPlaying ? <Pause size={13} /> : <Play size={13} />
+                    ) : (
+                      <Headphones size={13} />
+                    )}
+                    <span>
+                      {music.current
+                        ? music.isPlaying
+                          ? 'Pause music'
+                          : 'Resume music'
+                        : 'Play focus radio'}
+                    </span>
+                  </button>
+                  {music.current && (
+                    <button type="button" role="menuitem" onClick={() => { stepMusicTrack(1, 'manual'); setIconActionMenu(null); }}>
+                      <SkipForward size={13} />
+                      <span>Next track</span>
+                    </button>
+                  )}
+                  <button type="button" role="menuitem" onClick={() => { handleOpenMusicTab('liked'); setIconActionMenu(null); }}>
+                    <Heart size={13} />
+                    <span>Liked songs</span>
+                  </button>
+                </>
               )}
               {activeDesktopMenuApp.shortcut && (
                 <a
@@ -2385,6 +3286,10 @@ export function App() {
                   <CheckSquare size={13} />
                   <span>New checklist</span>
                 </button>
+                <button type="button" role="menuitem" onClick={() => { setDockActionMenu(null); openFocusPopover(); }}>
+                  <Timer size={13} />
+                  <span>Focus ritual</span>
+                </button>
               </>
             )}
             {dockActionMenu.id === 'browser' && (
@@ -2392,6 +3297,58 @@ export function App() {
                 <Compass size={13} />
                 <span>New search tab</span>
               </button>
+            )}
+            {dockActionMenu.id === 'youtube' && (
+              <>
+                <button type="button" role="menuitem" onClick={() => { handleOpenYouTubeSection('watch-later'); setDockActionMenu(null); }}>
+                  <Bookmark size={13} />
+                  <span>Watch later</span>
+                </button>
+                <button type="button" role="menuitem" onClick={() => { handleOpenYouTubeSection('history'); setDockActionMenu(null); }}>
+                  <Clock3 size={13} />
+                  <span>Watch history</span>
+                </button>
+                <button type="button" role="menuitem" onClick={() => { handleOpenYouTubeSection('url'); setDockActionMenu(null); }}>
+                  <Link2 size={13} />
+                  <span>Play from URL</span>
+                </button>
+              </>
+            )}
+            {dockActionMenu.id === 'music' && (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    if (music.current) toggleMusicPlayback();
+                    else playStarterMusicStream(0);
+                    setDockActionMenu(null);
+                  }}
+                >
+                  {music.current ? (
+                    music.isPlaying ? <Pause size={13} /> : <Play size={13} />
+                  ) : (
+                    <Headphones size={13} />
+                  )}
+                  <span>
+                    {music.current
+                      ? music.isPlaying
+                        ? 'Pause music'
+                        : 'Resume music'
+                      : 'Play focus radio'}
+                  </span>
+                </button>
+                {music.current && (
+                  <button type="button" role="menuitem" onClick={() => { stepMusicTrack(1, 'manual'); setDockActionMenu(null); }}>
+                    <SkipForward size={13} />
+                    <span>Next track</span>
+                  </button>
+                )}
+                <button type="button" role="menuitem" onClick={() => { handleOpenMusicTab('liked'); setDockActionMenu(null); }}>
+                  <Heart size={13} />
+                  <span>Liked songs</span>
+                </button>
+              </>
             )}
             {activeDockMenuApp.shortcut && (
               <a
@@ -2414,12 +3371,102 @@ export function App() {
               {pinnedDesktop.includes(dockActionMenu.id) ? <Check size={13} /> : <Plus size={13} />}
               <span>{pinnedDesktop.includes(dockActionMenu.id) ? 'Remove from desktop' : 'Pin to desktop'}</span>
             </button>
+            {spacesState.spaces.length > 1 &&
+              windowState.windows.some((w) => w.appId === dockActionMenu.id) && (
+                <>
+                  <div className="ctx-sep" role="separator" />
+                  {spacesState.spaces
+                    .map((sp, spIdx) => ({ sp, spIdx }))
+                    .filter(({ sp }) => sp.id !== spacesState.activeSpaceId)
+                    .map(({ sp, spIdx }) => (
+                      <button
+                        key={sp.id}
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          const targetWin = [...windowState.windows]
+                            .reverse()
+                            .find((w) => w.appId === dockActionMenu.id);
+                          if (targetWin) handleMoveWindowToSpace(targetWin.id, sp.id);
+                          setDockActionMenu(null);
+                        }}
+                      >
+                        <Layers size={13} />
+                        <span>Move to {sp.name}</span>
+                        <kbd className="ctx-kbd">Alt+{spIdx + 1}</kbd>
+                      </button>
+                    ))}
+                </>
+              )}
           </div>
         </>
       )}
 
-      {/* ── Dock — shows pinned + all currently open (unpinned) apps ── */}
+      {/* ── Dock — shows Spaces switcher + pinned + all currently open (unpinned) apps ── */}
       <nav className="dock" aria-label="Dock">
+        <button
+          type="button"
+          className={`dock-item dock-spaces ${spacesOpen ? 'is-active' : ''}`}
+          onClick={e => {
+            e.stopPropagation();
+            if (spacesOpen) closeSpacesPopover(true);
+            else openSpacesPopover();
+          }}
+          aria-label={`Desktop Spaces — ${activeSpace?.name ?? 'Space 1'}`}
+          title={`Spaces · ${activeSpace?.name ?? 'Space 1'} (Alt+1–${spacesState.spaces.length})`}
+        >
+          <span className="dock-icon dock-spaces-icon">
+            <Layers size={17} strokeWidth={1.5} />
+            <span className="dock-space-num">{activeSpaceIdx + 1}</span>
+          </span>
+          <span className="dock-label">
+            {activeSpace ? `${activeSpaceIdx + 1} · ${activeSpace.name}` : 'Spaces'}
+          </span>
+        </button>
+        <button
+          type="button"
+          className={`dock-item dock-focus ${focusOpen ? 'is-active' : ''} ${
+            focus.status !== 'idle' ? `is-live status-${focus.status}` : ''
+          }`}
+          onClick={e => {
+            e.stopPropagation();
+            if (focusOpen) closeFocusPopover(true);
+            else openFocusPopover();
+          }}
+          aria-label={
+            focus.status === 'running' || focus.status === 'paused'
+              ? `Focus Ritual — ${formatFocusClock(focus.remainingSeconds)} remaining`
+              : focus.status === 'completed'
+                ? 'Focus Ritual — Completed'
+                : 'Focus Rituals'
+          }
+          title={
+            focus.status !== 'idle'
+              ? `Focus · ${focus.intention || 'Deep work'}`
+              : 'Focus Rituals — Tie timer to Scratchpad tasks'
+          }
+        >
+          {focus.status === 'idle' ? (
+            <span className="dock-icon dock-focus-icon">
+              <Timer size={17} strokeWidth={1.5} />
+            </span>
+          ) : (
+            <span className="dock-focus-pill">
+              <span className={`dock-focus-dot status-${focus.status}`} />
+              <span className="dock-focus-clock">
+                {focus.status === 'completed'
+                  ? 'Done'
+                  : formatFocusClock(focus.remainingSeconds)}
+              </span>
+            </span>
+          )}
+          <span className="dock-label">
+            {focus.status !== 'idle'
+              ? `${focus.intention || 'Focus'}`
+              : 'Focus Ritual'}
+          </span>
+        </button>
+        <div className="dock-sep" />
         {dockAppIds.map(id => {
           const app = getAppDefinition(id, shortcuts); if (!app) return null;
           const toneClass = app.shortcut ? 'icon-shortcut' : `icon-${id}`;
@@ -2615,6 +3662,8 @@ export function App() {
           restoreSession={prefs.restoreSession}
           hasPassword={Boolean(passwordRecord)}
           versionTag={NEXUS_VERSION_TAG}
+          spaces={spacesState.spaces}
+          activeSpaceId={spacesState.activeSpaceId}
           onExecute={handleExecuteSpotlightCommand}
           onClose={() => closeSpotlight(true)}
         />

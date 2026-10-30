@@ -23,6 +23,42 @@ import {
   saveNotesState,
   type NotesState,
 } from '../data/notes';
+import {
+  MUSIC_HISTORY_KEY,
+  readMusicHistory,
+  readMusicLiked,
+  readMusicPlaylists,
+  readYouTubeHistory,
+  readYouTubeWatchLater,
+  sanitizeMediaTrackList,
+  sanitizeMusicPlaylists,
+  saveMusicHistory,
+  saveMusicLiked,
+  saveMusicPlaylists,
+  saveYouTubeHistory,
+  saveYouTubeWatchLater,
+  YOUTUBE_HISTORY_KEY,
+  type MediaTrack,
+  type MusicPlaylist,
+} from '../data/media';
+import {
+  readSpacesState,
+  sanitizeSpacesState,
+  saveSpacesState,
+  type SpacesState,
+} from '../data/spaces';
+import {
+  readSoundscapePersistedState,
+  sanitizeSoundscapePersistedState,
+  saveSoundscapePersistedState,
+  type SoundscapePersistedState,
+} from '../data/soundscape';
+import {
+  readFocusPersistedState,
+  sanitizeFocusPersistedState,
+  saveFocusPersistedState,
+  type FocusPersistedState,
+} from '../data/focus';
 
 export const WORKSPACE_BACKUP_FORMAT = 'nexus.workspace.backup';
 export const WORKSPACE_BACKUP_SCHEMA_VERSION = 1;
@@ -54,6 +90,14 @@ export interface NexusWorkspaceBackupV1 {
   notesState?: NotesState;
   browserPrefs: BrowserPrefs;
   browserHistory: BrowserHistoryItem[];
+  youtubeHistory?: MediaTrack[];
+  youtubeWatchLater?: MediaTrack[];
+  musicHistory?: MediaTrack[];
+  musicLiked?: MediaTrack[];
+  musicPlaylists?: MusicPlaylist[];
+  spacesState?: SpacesState;
+  soundscapeState?: SoundscapePersistedState;
+  focusState?: FocusPersistedState;
 }
 
 const VALID_WALLPAPERS = new Set([
@@ -97,6 +141,7 @@ export function buildWorkspaceBackup(input: {
   messages: DesktopMessage[];
   shortcuts: SavedShortcut[];
   widgets: WidgetDefinition[];
+  spacesState?: SpacesState;
 }): NexusWorkspaceBackupV1 {
   const notesState = readStoredNotesStateForBackup();
   let scratchpad = '';
@@ -128,6 +173,14 @@ export function buildWorkspaceBackup(input: {
     ...(notesState ? { notesState } : {}),
     browserPrefs: readBrowserPrefs(),
     browserHistory: readBrowserHistory(),
+    youtubeHistory: readYouTubeHistory(),
+    youtubeWatchLater: readYouTubeWatchLater(),
+    musicHistory: readMusicHistory(),
+    musicLiked: readMusicLiked(),
+    musicPlaylists: readMusicPlaylists(),
+    spacesState: input.spacesState ?? readSpacesState(),
+    soundscapeState: readSoundscapePersistedState(),
+    focusState: readFocusPersistedState(),
   };
 }
 
@@ -350,6 +403,24 @@ export function parseAndValidateWorkspaceBackup(rawText: string): NexusWorkspace
     }
   }
 
+  const youtubeHistory = obj.youtubeHistory !== undefined ? sanitizeMediaTrackList(obj.youtubeHistory, 30) : undefined;
+  const youtubeWatchLater = obj.youtubeWatchLater !== undefined ? sanitizeMediaTrackList(obj.youtubeWatchLater, 40) : undefined;
+  const musicHistory = obj.musicHistory !== undefined ? sanitizeMediaTrackList(obj.musicHistory, 40) : undefined;
+  const musicLiked = obj.musicLiked !== undefined ? sanitizeMediaTrackList(obj.musicLiked, 60) : undefined;
+  const musicPlaylists = obj.musicPlaylists !== undefined ? sanitizeMusicPlaylists(obj.musicPlaylists) : undefined;
+  const spacesState =
+    obj.spacesState !== undefined
+      ? sanitizeSpacesState(obj.spacesState, validAppIds) ?? undefined
+      : undefined;
+  const soundscapeState =
+    obj.soundscapeState !== undefined
+      ? sanitizeSoundscapePersistedState(obj.soundscapeState) ?? undefined
+      : undefined;
+  const focusState =
+    obj.focusState !== undefined
+      ? sanitizeFocusPersistedState(obj.focusState) ?? undefined
+      : undefined;
+
   return {
     format: WORKSPACE_BACKUP_FORMAT,
     schemaVersion: WORKSPACE_BACKUP_SCHEMA_VERSION,
@@ -367,6 +438,14 @@ export function parseAndValidateWorkspaceBackup(rawText: string): NexusWorkspace
     ...(notesState ? { notesState } : {}),
     browserPrefs,
     browserHistory,
+    ...(youtubeHistory !== undefined ? { youtubeHistory } : {}),
+    ...(youtubeWatchLater !== undefined ? { youtubeWatchLater } : {}),
+    ...(musicHistory !== undefined ? { musicHistory } : {}),
+    ...(musicLiked !== undefined ? { musicLiked } : {}),
+    ...(musicPlaylists !== undefined ? { musicPlaylists } : {}),
+    ...(spacesState !== undefined ? { spacesState } : {}),
+    ...(soundscapeState !== undefined ? { soundscapeState } : {}),
+    ...(focusState !== undefined ? { focusState } : {}),
   };
 }
 
@@ -380,6 +459,14 @@ export function applyWorkspaceBackupToStorage(backup: NexusWorkspaceBackupV1): v
     }
     saveBrowserPrefs(backup.browserPrefs);
     saveBrowserHistory(backup.browserHistory);
+    if (backup.youtubeHistory !== undefined) saveYouTubeHistory(backup.youtubeHistory);
+    if (backup.youtubeWatchLater !== undefined) saveYouTubeWatchLater(backup.youtubeWatchLater);
+    if (backup.musicHistory !== undefined) saveMusicHistory(backup.musicHistory);
+    if (backup.musicLiked !== undefined) saveMusicLiked(backup.musicLiked);
+    if (backup.musicPlaylists !== undefined) saveMusicPlaylists(backup.musicPlaylists);
+    if (backup.spacesState !== undefined) saveSpacesState(backup.spacesState);
+    if (backup.soundscapeState !== undefined) saveSoundscapePersistedState(backup.soundscapeState);
+    if (backup.focusState !== undefined) saveFocusPersistedState(backup.focusState);
     for (const [widgetId, kv] of Object.entries(backup.widgetLocalData)) {
       localStorage.setItem(`${WIDGET_DATA_PREFIX}${widgetId}`, JSON.stringify(kv));
     }
@@ -393,7 +480,10 @@ export function clearAllWorkspaceStorage(): void {
     const keysToRemove: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && k.startsWith('nexus.')) {
+      if (
+        k &&
+        (k.startsWith('nexus.') || k === YOUTUBE_HISTORY_KEY || k === MUSIC_HISTORY_KEY)
+      ) {
         keysToRemove.push(k);
       }
     }

@@ -1,4 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  dispatchWidgetMusicCommand,
+  getWidgetMusicSnapshot,
+  subscribeMusicState,
+} from '../data/media';
+import { subscribeSoundscapeState } from '../data/soundscape';
 import type { WidgetDefinition } from './types';
 import { parseWidgetJson } from './types';
 
@@ -19,20 +25,30 @@ function readWidgetState(widgetId: string): unknown {
 }
 
 function readWidgetLocal(widgetId: string): Record<string, unknown> {
-  try { const value: unknown = JSON.parse(localStorage.getItem('nexus.widget-local.' + widgetId) || '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}; } catch { return {}; }
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem('nexus.widget-local.' + widgetId) || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function buildDocument(widget: WidgetDefinition, theme: 'light' | 'dark') {
   const payload = JSON.stringify(parseWidgetJson(widget.source.json)).replace(/</g, '\\u003c');
   const savedState = JSON.stringify(readWidgetState(widget.id)).replace(/</g, '\\u003c');
   const initialLocal = JSON.stringify(readWidgetLocal(widget.id)).replace(/</g, '\\u003c');
+  const initialMusic = JSON.stringify(getWidgetMusicSnapshot()).replace(/</g, '\\u003c');
   const script = widget.source.js.replace(/<\/script/gi, '<\\\\/script');
   const safeTheme = theme === 'dark' ? 'dark' : 'light';
   return `<!doctype html><html data-theme="${safeTheme}"><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>${widget.source.css}</style></head><body data-theme="${safeTheme}">${widget.source.html}<script>
 const NEXUS_DATA = ${payload};
 let NEXUS_STATE = ${savedState};
 let NEXUS_THEME = ${JSON.stringify(theme)};
-let NEXUS_LOCAL = ${initialLocal}; 
+let NEXUS_LOCAL = ${initialLocal};
+let NEXUS_MUSIC = ${initialMusic};
+const sendMusicCmd = (action, cmdPayload) => parent.postMessage({ type: 'nexus:music-cmd', action, payload: cmdPayload }, '*');
 const NEXUS = {
   data: NEXUS_DATA,
   getState: () => NEXUS_STATE,
@@ -46,18 +62,65 @@ const NEXUS = {
   openApp: (appId) => parent.postMessage({ type: 'nexus:open-app', appId }, '*'),
   openUrl: (url) => parent.postMessage({ type: 'nexus:open-url', url }, '*'),
   notify: (message) => parent.postMessage({ type: 'nexus:notify', message }, '*'),
-  setState: (state) => { NEXUS_STATE = state; parent.postMessage({ type: 'nexus:set-state', state }, '*'); }
+  setState: (state) => { NEXUS_STATE = state; parent.postMessage({ type: 'nexus:set-state', state }, '*'); },
+  getMusic: () => NEXUS_MUSIC,
+  music: {
+    getState: () => NEXUS_MUSIC,
+    refresh: () => parent.postMessage({ type: 'nexus:music-read' }, '*'),
+    onChange: (callback) => {
+      if (typeof callback !== 'function') return () => {};
+      const handler = (event) => callback(event.detail);
+      window.addEventListener('nexus:music', handler);
+      return () => window.removeEventListener('nexus:music', handler);
+    },
+    play: (target) => sendMusicCmd('play', target),
+    pause: () => sendMusicCmd('pause'),
+    toggle: () => sendMusicCmd('toggle'),
+    stop: () => sendMusicCmd('stop'),
+    next: () => sendMusicCmd('next'),
+    prev: () => sendMusicCmd('prev'),
+    seek: (seconds) => sendMusicCmd('seek', Number(seconds)),
+    setVolume: (volume) => sendMusicCmd('set-volume', Number(volume)),
+    toggleMute: () => sendMusicCmd('toggle-mute'),
+    toggleShuffle: () => sendMusicCmd('toggle-shuffle'),
+    cycleRepeat: () => sendMusicCmd('cycle-repeat'),
+    toggleLike: (track) => sendMusicCmd('toggle-like', track),
+    playStream: (indexOrId) => sendMusicCmd('play-stream', indexOrId),
+    playPlaylist: (idOrName) => sendMusicCmd('play-playlist', idOrName),
+    enqueue: (target, title) => sendMusicCmd('enqueue', typeof target === 'string' ? { target, title } : target),
+    search: (query) => sendMusicCmd('search', query),
+    open: (tab) => sendMusicCmd('open', tab),
+    setSoundscape: (layer, level) => sendMusicCmd('set-soundscape', { layer, level: Number(level) }),
+    toggleSoundscape: (enable) => sendMusicCmd('toggle-soundscape', typeof enable === 'boolean' ? enable : undefined),
+    setSoundscapeVolume: (volume) => sendMusicCmd('set-soundscape-volume', Number(volume)),
+    applySoundscapePreset: (idOrName) => sendMusicCmd('apply-soundscape-preset', idOrName),
+    clearSoundscape: () => sendMusicCmd('clear-soundscape'),
+  }
 };
 window.NEXUS = NEXUS;
 window.addEventListener('message', (event) => {
   if (!event.data || typeof event.data.type !== 'string') return;
   if (event.data.type === 'nexus:ready') {
     if (Object.prototype.hasOwnProperty.call(event.data, 'state')) NEXUS_STATE = event.data.state;
-    window.dispatchEvent(new CustomEvent('nexus:ready', { detail: { data: event.data.data ?? NEXUS_DATA, state: NEXUS_STATE } }));
+    window.dispatchEvent(new CustomEvent('nexus:ready', { detail: { data: event.data.data ?? NEXUS_DATA, state: NEXUS_STATE, music: NEXUS_MUSIC } }));
   }
-  if (event.data.type === 'nexus:theme') { NEXUS_THEME = event.data.theme; document.documentElement.dataset.theme = NEXUS_THEME; document.body.dataset.theme = NEXUS_THEME; window.dispatchEvent(new CustomEvent('nexus:theme', { detail: NEXUS_THEME })); }
-  if (event.data.type === 'nexus:local') { NEXUS_LOCAL = event.data.values || {}; window.dispatchEvent(new CustomEvent('nexus:local', { detail: NEXUS_LOCAL })); }
-  if (event.data.type === 'nexus:time') window.dispatchEvent(new CustomEvent('nexus:time', { detail: event.data.value }));
+  if (event.data.type === 'nexus:theme') {
+    NEXUS_THEME = event.data.theme;
+    document.documentElement.dataset.theme = NEXUS_THEME;
+    document.body.dataset.theme = NEXUS_THEME;
+    window.dispatchEvent(new CustomEvent('nexus:theme', { detail: NEXUS_THEME }));
+  }
+  if (event.data.type === 'nexus:local') {
+    NEXUS_LOCAL = event.data.values || {};
+    window.dispatchEvent(new CustomEvent('nexus:local', { detail: NEXUS_LOCAL }));
+  }
+  if (event.data.type === 'nexus:music' && event.data.state) {
+    NEXUS_MUSIC = event.data.state;
+    window.dispatchEvent(new CustomEvent('nexus:music', { detail: NEXUS_MUSIC }));
+  }
+  if (event.data.type === 'nexus:time') {
+    window.dispatchEvent(new CustomEvent('nexus:time', { detail: event.data.value }));
+  }
 });
 parent.postMessage({ type: 'nexus:ready', data: NEXUS_DATA, state: NEXUS_STATE }, '*');
 ${script}
@@ -77,14 +140,26 @@ export function WidgetRuntime({ widget, theme, onOpenApp, onOpenUrl }: Props) {
       switch (event.data.type) {
         case 'nexus:ready': {
           let values: Record<string, unknown> = {};
-          try { const raw = localStorage.getItem('nexus.widget-local.' + widget.id); values = raw ? JSON.parse(raw) : {}; } catch {}
+          try {
+            const raw = localStorage.getItem('nexus.widget-local.' + widget.id);
+            values = raw ? JSON.parse(raw) : {};
+          } catch {}
           frameRef.current?.contentWindow?.postMessage({ type: 'nexus:theme', theme: themeRef.current }, '*');
           frameRef.current?.contentWindow?.postMessage({ type: 'nexus:local', values }, '*');
+          frameRef.current?.contentWindow?.postMessage({ type: 'nexus:music', state: getWidgetMusicSnapshot() }, '*');
           frameRef.current?.contentWindow?.postMessage({ type: 'nexus:ready', data: event.data.data, state: event.data.state ?? null }, '*');
           break;
         }
         case 'nexus:read-time':
           frameRef.current?.contentWindow?.postMessage({ type: 'nexus:time', value: new Date().toISOString() }, '*');
+          break;
+        case 'nexus:music-read':
+          frameRef.current?.contentWindow?.postMessage({ type: 'nexus:music', state: getWidgetMusicSnapshot() }, '*');
+          break;
+        case 'nexus:music-cmd':
+          if (typeof event.data.action === 'string') {
+            dispatchWidgetMusicCommand(event.data.action, event.data.payload, () => onOpenApp('music'));
+          }
           break;
         case 'nexus:open-app':
           if (typeof event.data.appId === 'string') onOpenApp(event.data.appId);
@@ -94,17 +169,45 @@ export function WidgetRuntime({ widget, theme, onOpenApp, onOpenUrl }: Props) {
             try {
               const url = new URL(event.data.url);
               if (url.protocol === 'https:' || url.protocol === 'http:') onOpenUrl(url.href);
-            } catch { /* Ignore malformed URLs from untrusted widget code. */ }
+            } catch {
+              /* Ignore malformed URLs from untrusted widget code. */
+            }
           }
           break;
         case 'nexus:set-theme':
-          if (event.data.theme === 'light' || event.data.theme === 'dark') window.dispatchEvent(new CustomEvent('nexus:widget-theme-request', { detail: event.data.theme }));
+          if (event.data.theme === 'light' || event.data.theme === 'dark') {
+            window.dispatchEvent(new CustomEvent('nexus:widget-theme-request', { detail: event.data.theme }));
+          }
           break;
         case 'nexus:set-local':
-          if (typeof event.data.key === 'string' && event.data.key.length <= 200) { try { const key = 'nexus.widget-local.' + widget.id; const values = readWidgetLocal(widget.id); values[event.data.key] = event.data.value; const serialized = JSON.stringify(values); if (serialized.length > 500_000) throw new Error('too large'); localStorage.setItem(key, serialized); frameRef.current?.contentWindow?.postMessage({ type: 'nexus:local', values }, '*'); setError(''); } catch { setError('Widget local storage could not be saved.'); } }
+          if (typeof event.data.key === 'string' && event.data.key.length <= 200) {
+            try {
+              const key = 'nexus.widget-local.' + widget.id;
+              const values = readWidgetLocal(widget.id);
+              values[event.data.key] = event.data.value;
+              const serialized = JSON.stringify(values);
+              if (serialized.length > 500_000) throw new Error('too large');
+              localStorage.setItem(key, serialized);
+              frameRef.current?.contentWindow?.postMessage({ type: 'nexus:local', values }, '*');
+              setError('');
+            } catch {
+              setError('Widget local storage could not be saved.');
+            }
+          }
           break;
         case 'nexus:remove-local':
-          if (typeof event.data.key === 'string' && event.data.key.length <= 200) { try { const key = 'nexus.widget-local.' + widget.id; const values = readWidgetLocal(widget.id); delete values[event.data.key]; localStorage.setItem(key, JSON.stringify(values)); frameRef.current?.contentWindow?.postMessage({ type: 'nexus:local', values }, '*'); setError(''); } catch { setError('Widget local storage could not be updated.'); } }
+          if (typeof event.data.key === 'string' && event.data.key.length <= 200) {
+            try {
+              const key = 'nexus.widget-local.' + widget.id;
+              const values = readWidgetLocal(widget.id);
+              delete values[event.data.key];
+              localStorage.setItem(key, JSON.stringify(values));
+              frameRef.current?.contentWindow?.postMessage({ type: 'nexus:local', values }, '*');
+              setError('');
+            } catch {
+              setError('Widget local storage could not be updated.');
+            }
+          }
           break;
         case 'nexus:set-state':
           try {
@@ -115,7 +218,9 @@ export function WidgetRuntime({ widget, theme, onOpenApp, onOpenUrl }: Props) {
             }
             localStorage.setItem(`nexus.widget-state.${widget.id}`, serialized);
             setError('');
-          } catch { setError('Widget state could not be saved.'); }
+          } catch {
+            setError('Widget state could not be saved.');
+          }
           break;
         case 'nexus:notify':
           if (typeof event.data.message === 'string') setError(event.data.message.slice(0, 300));
@@ -128,10 +233,29 @@ export function WidgetRuntime({ widget, theme, onOpenApp, onOpenUrl }: Props) {
     return () => window.removeEventListener('message', handleMessage);
   }, [onOpenApp, onOpenUrl, widget.id]);
 
-  useEffect(() => { frameRef.current?.contentWindow?.postMessage({ type: 'nexus:theme', theme }, '*'); }, [theme]);
+  useEffect(() => {
+    frameRef.current?.contentWindow?.postMessage({ type: 'nexus:theme', theme }, '*');
+  }, [theme]);
 
-  return <div className="widget-runtime">
-    <iframe ref={frameRef} title={widget.name} srcDoc={documentSource} sandbox="allow-scripts allow-forms" />
-    {error && <span className="widget-runtime-notice">{error}</span>}
-  </div>;
+  useEffect(() => {
+    const pushMusicSnapshot = () => {
+      frameRef.current?.contentWindow?.postMessage(
+        { type: 'nexus:music', state: getWidgetMusicSnapshot() },
+        '*'
+      );
+    };
+    const unsubMusic = subscribeMusicState(pushMusicSnapshot);
+    const unsubSoundscape = subscribeSoundscapeState(pushMusicSnapshot);
+    return () => {
+      unsubMusic();
+      unsubSoundscape();
+    };
+  }, [documentSource]);
+
+  return (
+    <div className="widget-runtime">
+      <iframe ref={frameRef} title={widget.name} srcDoc={documentSource} sandbox="allow-scripts allow-forms" />
+      {error && <span className="widget-runtime-notice">{error}</span>}
+    </div>
+  );
 }

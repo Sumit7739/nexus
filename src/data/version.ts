@@ -8,7 +8,7 @@
  *   (enforced automatically by `tests/version.test.ts`).
  */
 
-export const NEXUS_VERSION = '1.3.0';
+export const NEXUS_VERSION = '1.8.0';
 export const NEXUS_VERSION_TAG = `v${NEXUS_VERSION}`;
 
 export type ChangelogCategory = 'added' | 'updated' | 'fixed' | 'removed';
@@ -28,6 +28,142 @@ export interface ChangelogRelease {
 }
 
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
+  {
+    version: '1.8.0',
+    title: 'Focus Rituals Tied to Scratchpad Tasks, Dock Countdown & Window Decluttering',
+    date: 'October 2026',
+    summary:
+      'Connected timed Focus Rituals directly to Scratchpad checklists (`- [ ]`), with a live Dock countdown indicator, 1-click task completion writeback (`- [x]`), atmosphere soundscape pairing, and reversible background window decluttering.',
+    groups: [
+      {
+        kind: 'added',
+        label: 'Added',
+        items: [
+          'Focus Rituals Engine (`nexus.focus.v1`): pick any unchecked `- [ ]` task across Scratchpad notes or write an intention, choose `15m`, `25m`, `50m`, or custom minutes, pair procedural Soundscapes or Lofi Focus Radio, and track daily completed focus sessions.',
+          'Dock Focus Countdown & Popover: calm Dock timer readout (`MM:SS` with `tabular-nums` and status indicator) plus 1-click **Check off task in Scratchpad** (`- [x]`), `+5m` extend, restorative breaks, and optional **Declutter background windows** (minimizes non-Scratchpad apps and restores them on finish).',
+          'Scratchpad & Spotlight Integration: inline **Focus** trigger button on every unchecked task row in Scratchpad Preview/Split, `Focus next task` toolbar action, `Focus 25m` text-selection action, live active-focus banner inside Scratchpad, and Spotlight `Focus on: <Task>` & `focus <mins>m <intention>` commands.',
+        ],
+      },
+      {
+        kind: 'updated',
+        label: 'Updated',
+        items: [
+          'Added `Start focus ritual` quick actions to Desktop, App Launcher, Desktop Icon, and Dock context menus.',
+          'Workspace JSON backup export, import validation, and factory reset now persist and restore `focusState` preferences and completed session history.',
+        ],
+      },
+    ],
+  },
+  {
+    version: '1.7.0',
+    title: 'Procedural Soundscape Mixer, Saved Atmospheres & Widget Soundscape API',
+    date: 'October 2026',
+    summary:
+      'Added a zero-dependency Web Audio procedural soundscape synthesizer with 6 organic channels (Soft Rain, Vinyl Dust, Fireplace, Deep Brown, Pines & Wind, Night Crickets) that layer seamlessly underneath Music tracks or play solo across the desktop.',
+    groups: [
+      {
+        kind: 'added',
+        label: 'Added',
+        items: [
+          'Procedural Web Audio Soundscape Engine (`nexus.soundscape.v1`): seamless stereo-crossfaded Pink/Brownian noise, analog vinyl micro-crackle, hearth embers, dual-LFO pine wind, and gentle evening cricket stridulation with smooth click-free gain ramps and zero network dependency.',
+          'Dedicated `Soundscapes` studio tab inside Music with 4 curated 1-click focus atmospheres (`Rainy Study`, `Cabin Hearth`, `Deep Focus Shield`, `Midnight Porch`), custom named mix saving, master ambience volume, and 6 tactile channel faders.',
+          'Floating Now Playing quick-mixer popover (layer ambience over any song or run standalone ambient sessions from the top-right desktop bar), Spotlight Soundscape commands/presets, and `Ambient Soundscape` Widget Studio template + `NEXUS.music` soundscape API.',
+        ],
+      },
+      {
+        kind: 'updated',
+        label: 'Updated',
+        items: [
+          'Extended `window.NEXUS.music` with live `.soundscape` state snapshots plus `setSoundscape(layer, 0–100)`, `applySoundscapePreset(name)`, `toggleSoundscape()`, `setSoundscapeVolume()`, and `clearSoundscape()`.',
+          'Workspace JSON backup export, import validation, and factory reset now persist and restore `soundscapeState` custom mixes and fader levels.',
+        ],
+      },
+    ],
+  },
+  {
+    version: '1.6.0',
+    title: 'Desktop Spaces, 1-Click Context Switching & Per-Space Audio/Widget Rules',
+    date: 'October 2026',
+    summary:
+      'Introduced multi-workspace Desktop Spaces for instant context switching across window layouts, 50/50 split-screen arrangements, ambient wallpapers, per-space widget visibility, and linked Music focus streams or playlists.',
+    groups: [
+      {
+        kind: 'added',
+        label: 'Added',
+        items: [
+          'Desktop Spaces with 3 curated starter contexts — Deep Work (distraction-free canvas), Research (50/50 Browser + Scratchpad split on Glacier), and Unwind (Music + Nexus Tube lounge on Dusk with Chillhop radio) — plus up to 6 customizable Spaces.',
+          'Dock Spaces Switcher popover with 1-click space switching, inline configuration drawers (rename, 12 wallpapers, linked audio rules, per-space widget visibility toggles, and "Save current windows here"), and keyboard shortcuts (`Alt + 1..6` and `Ctrl + Alt + 1..6`).',
+          'Dedicated `Settings → Spaces` management panel, Desktop right-click quick Space switcher row, Dock right-click `Move to <Space>` window actions, and Spotlight Spaces search (`switch-space`, `move-active-window-to-space`, and `space <Name>` creation).',
+        ],
+      },
+      {
+        kind: 'updated',
+        label: 'Updated',
+        items: [
+          'Live window moves, split-screen snaps, and wallpaper changes sync automatically into the active Space, and 50/50 snapped windows recompute bounds cleanly for the current viewport on switch.',
+          'Workspace JSON backup export, import, and factory reset now persist and restore `spacesState` alongside all desktop preferences.',
+        ],
+      },
+    ],
+  },
+  {
+    version: '1.5.0',
+    title: 'Widget Studio Music Bridge, Audio API Reference & Now Playing Deck',
+    date: 'October 2026',
+    summary:
+      'Exposed real-time desktop Music playback state and full audio transport, volume, stream, playlist, and app-navigation controls to custom desktop widgets via window.NEXUS.music, paired with searchable API Reference docs and a Now Playing Deck starter widget.',
+    groups: [
+      {
+        kind: 'added',
+        label: 'Added',
+        items: [
+          'Live Widget Music Bridge (`window.NEXUS.music` & `nexus:music` events): custom widgets can read live track metadata, cover art, progress, duration, volume, shuffle/repeat, queue, playlists, and liked status in real time without reloading the iframe.',
+          'Full widget audio & Music app control methods: `toggle()`, `play(target?)`, `pause()`, `stop()`, `next()`, `prev()`, `seek(sec)`, `setVolume(0–100)`, `toggleMute()`, `toggleShuffle()`, `cycleRepeat()`, `toggleLike()`, `playStream(indexOrId)`, `playPlaylist(idOrName)`, `enqueue(idOrUrl, title?)`, `search(query)`, and `open(tab?)`.',
+          'Widget Studio "Now Playing Deck" starter template plus interactive category filtering (`All`, `Music`, `Lifecycle`, `Theme`, `Storage`, `Navigation`) and method search in the API Reference tab.',
+        ],
+      },
+      {
+        kind: 'updated',
+        label: 'Updated',
+        items: [
+          'Opening Music, Nexus Tube, or Widget Studio from a desktop widget now focuses an existing window cleanly instead of spawning duplicate instances.',
+        ],
+      },
+    ],
+  },
+  {
+    version: '1.4.0',
+    title: 'Nexus Tube, Persistent Desktop Music, Timestamp Notes & 4-Column Launcher',
+    date: 'October 2026',
+    summary:
+      'Introduced Nexus Tube and a persistent desktop Music player with a floating Now Playing bar, playlists, liked songs, curated 24/7 focus streams, one-click video timestamp notes to Scratchpad, Spotlight media search, Browser video/audio handoff, and a spacious 4-column App Launcher.',
+    groups: [
+      {
+        kind: 'added',
+        label: 'Added',
+        items: [
+          'Persistent desktop Music runtime & floating Now Playing mini-player: audio continues uninterrupted when Music is minimized or closed, with auto-advance on track end, seek scrubber, volume slider, shuffle, repeat (Off / All / One), Up Next queue reordering, Liked songs, custom Playlists, and 6 zero-search 24/7 focus streams.',
+          'Nexus Tube workspace upgrades: Watch later queue, rich video durations, view counts, and expandable descriptions, one-click "Listen in Music" handoff, and live "[MM:SS]" Timestamp Note capture directly into Scratchpad.',
+          'Cross-app media workflows: Spotlight ("yt <query>", "music <query>", "play <query>", media transport, and history/Watch later indexing), inline "Watch in Tube" & "Play Audio" buttons on YouTube results in Nexus Browser, and contextual media quick actions across Launcher, Desktop, and Dock menus.',
+        ],
+      },
+      {
+        kind: 'updated',
+        label: 'Updated',
+        items: [
+          'Expanded the App Launcher grid to a balanced 4-column layout with matching arrow-key navigation and dedicated Music icon badge tokens in light and dark themes.',
+          'Workspace JSON backup export, import, and factory reset now include YouTube watch history, Watch later, Music history, Liked songs, and custom Playlists.',
+        ],
+      },
+      {
+        kind: 'fixed',
+        label: 'Fixed',
+        items: [
+          'Added YouTube IFrame API origin handshake for reliable live playback progress, seek, volume, and track-end events, plus a live web + oEmbed metadata fallback when YOUTUBE_API_KEY is not configured.',
+        ],
+      },
+    ],
+  },
   {
     version: '1.3.0',
     title: 'Desktop Context Menu, Quick Note Creation & Menu Layering Fixes',

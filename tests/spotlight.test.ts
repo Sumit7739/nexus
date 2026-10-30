@@ -157,4 +157,72 @@ describe('Spotlight search indexing, deep-linking & ranking', () => {
       wallpaperId: 'glacier',
     });
   });
+
+  it('supports yt/music search prefixes, YouTube URL handoff, and indexed media items', () => {
+    const ytPrefix = buildSpotlightResults(makeBaseContext({ query: 'yt rust async runtime' }));
+    expect(ytPrefix.items[0]?.id).toBe('query:youtube-prefix-search');
+    expect(ytPrefix.items[0]?.command).toEqual({
+      type: 'youtube-search',
+      query: 'rust async runtime',
+    });
+
+    const musicPrefix = buildSpotlightResults(makeBaseContext({ query: 'music ambient piano' }));
+    expect(musicPrefix.items[0]?.id).toBe('query:music-prefix-search');
+    expect(musicPrefix.items[0]?.command).toEqual({
+      type: 'music-search',
+      query: 'ambient piano',
+    });
+
+    const ytUrl = buildSpotlightResults(
+      makeBaseContext({ query: 'https://youtu.be/jfKfPfyJRdk' })
+    );
+    expect(ytUrl.items[0]?.id).toBe('query:youtube-url-play');
+    expect(ytUrl.items[1]?.id).toBe('query:music-url-play');
+
+    const mediaIndexed = buildSpotlightResults(
+      makeBaseContext({
+        query: 'KEXP',
+        youtubeWatchLater: [
+          {
+            id: '4xDzrJKXOOY',
+            title: 'Khruangbin Live on KEXP',
+            channelTitle: 'KEXP',
+            description: '',
+            publishedAt: '',
+            thumbnail: 'https://i.ytimg.com/vi/4xDzrJKXOOY/mqdefault.jpg',
+            duration: '28:14',
+          },
+        ],
+        musicCurrent: {
+          id: 'jfKfPfyJRdk',
+          title: 'lofi hip hop radio',
+          channelTitle: 'Lofi Girl',
+          description: '',
+          publishedAt: '',
+          thumbnail: 'https://i.ytimg.com/vi/jfKfPfyJRdk/mqdefault.jpg',
+        },
+        musicIsPlaying: true,
+      })
+    );
+    const watchLaterHit = mediaIndexed.items.find((i) => i.id === 'media:yt:4xDzrJKXOOY');
+    expect(watchLaterHit).toBeDefined();
+    expect(watchLaterHit?.subtitle).toContain('Watch later');
+
+    const transportResults = buildSpotlightResults(
+      makeBaseContext({
+        query: 'Pause Music',
+        musicCurrent: {
+          id: 'jfKfPfyJRdk',
+          title: 'lofi hip hop radio',
+          channelTitle: 'Lofi Girl',
+          description: '',
+          publishedAt: '',
+          thumbnail: 'https://i.ytimg.com/vi/jfKfPfyJRdk/mqdefault.jpg',
+        },
+        musicIsPlaying: true,
+      })
+    );
+    expect(transportResults.items[0]?.command).toEqual({ type: 'music-toggle-play' });
+  });
 });
+
