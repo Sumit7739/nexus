@@ -59,6 +59,18 @@ import {
   saveFocusPersistedState,
   type FocusPersistedState,
 } from '../data/focus';
+import {
+  readStashPersistedState,
+  sanitizeStashPersistedState,
+  saveStashPersistedState,
+  type StashPersistedState,
+} from '../data/stash';
+import {
+  readStoredDaylineStateForBackup,
+  sanitizeDaylineState,
+  saveDaylineState,
+  type DaylineState,
+} from '../data/dayline';
 
 export const WORKSPACE_BACKUP_FORMAT = 'nexus.workspace.backup';
 export const WORKSPACE_BACKUP_SCHEMA_VERSION = 1;
@@ -98,6 +110,8 @@ export interface NexusWorkspaceBackupV1 {
   spacesState?: SpacesState;
   soundscapeState?: SoundscapePersistedState;
   focusState?: FocusPersistedState;
+  stashState?: StashPersistedState;
+  daylineState?: DaylineState;
 }
 
 const VALID_WALLPAPERS = new Set([
@@ -144,6 +158,7 @@ export function buildWorkspaceBackup(input: {
   spacesState?: SpacesState;
 }): NexusWorkspaceBackupV1 {
   const notesState = readStoredNotesStateForBackup();
+  const daylineState = readStoredDaylineStateForBackup();
   let scratchpad = '';
   try {
     scratchpad = localStorage.getItem(LEGACY_NOTES_KEY) ?? '';
@@ -181,6 +196,8 @@ export function buildWorkspaceBackup(input: {
     spacesState: input.spacesState ?? readSpacesState(),
     soundscapeState: readSoundscapePersistedState(),
     focusState: readFocusPersistedState(),
+    stashState: readStashPersistedState(),
+    ...(daylineState ? { daylineState } : {}),
   };
 }
 
@@ -420,6 +437,12 @@ export function parseAndValidateWorkspaceBackup(rawText: string): NexusWorkspace
     obj.focusState !== undefined
       ? sanitizeFocusPersistedState(obj.focusState) ?? undefined
       : undefined;
+  const stashState =
+    obj.stashState !== undefined
+      ? sanitizeStashPersistedState(obj.stashState) ?? undefined
+      : undefined;
+  const daylineState =
+    obj.daylineState !== undefined ? sanitizeDaylineState(obj.daylineState) : undefined;
 
   return {
     format: WORKSPACE_BACKUP_FORMAT,
@@ -446,6 +469,8 @@ export function parseAndValidateWorkspaceBackup(rawText: string): NexusWorkspace
     ...(spacesState !== undefined ? { spacesState } : {}),
     ...(soundscapeState !== undefined ? { soundscapeState } : {}),
     ...(focusState !== undefined ? { focusState } : {}),
+    ...(stashState !== undefined ? { stashState } : {}),
+    ...(daylineState !== undefined ? { daylineState } : {}),
   };
 }
 
@@ -467,6 +492,8 @@ export function applyWorkspaceBackupToStorage(backup: NexusWorkspaceBackupV1): v
     if (backup.spacesState !== undefined) saveSpacesState(backup.spacesState);
     if (backup.soundscapeState !== undefined) saveSoundscapePersistedState(backup.soundscapeState);
     if (backup.focusState !== undefined) saveFocusPersistedState(backup.focusState);
+    if (backup.stashState !== undefined) saveStashPersistedState(backup.stashState);
+    if (backup.daylineState !== undefined) saveDaylineState(sanitizeDaylineState(backup.daylineState));
     for (const [widgetId, kv] of Object.entries(backup.widgetLocalData)) {
       localStorage.setItem(`${WIDGET_DATA_PREFIX}${widgetId}`, JSON.stringify(kv));
     }

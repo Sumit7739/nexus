@@ -32,7 +32,9 @@ import {
   Timer,
   Trash2,
   X,
+  Zap,
 } from 'lucide-react';
+import { stashItem } from '../data/stash';
 import {
   clearCompletedTasks,
   computeNoteStats,
@@ -1437,6 +1439,25 @@ export function ScratchpadApp() {
                     icon: <Plus size={12} />,
                     title: 'Create a new Scratchpad note from selected text',
                     onSelect: handleExtractSelectionToNote,
+                  },
+                  {
+                    id: 'stash-selection',
+                    label: 'Stash',
+                    icon: <Zap size={12} />,
+                    title: 'Send selected text to Stash Edge Shelf',
+                    onSelect: () => {
+                      const item = stashItem({
+                        content: selectionMenu.text,
+                        source: {
+                          title: activeNote ? extractNoteTitle(activeNote.title, activeNote.content) : 'Scratchpad note',
+                        },
+                        openShelf: true,
+                      });
+                      setSelectionMenu(null);
+                      if (item) {
+                        showActionNotice(`Stashed ${item.kind} card`);
+                      }
+                    },
                   },
                   {
                     id: 'copy-text',

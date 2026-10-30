@@ -2846,6 +2846,31 @@
   color: var(--ink-2);
 }
 
+.dock-stash-icon {
+  position: relative;
+  color: #ca8a04;
+}
+
+.desktop.theme-dark .dock-stash-icon {
+  color: #facc15;
+}
+
+.dock-stash-badge {
+  position: absolute;
+  right: 5px;
+  bottom: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: #a16207;
+}
+
+.desktop.theme-dark .dock-stash-badge {
+  color: #fef08a;
+}
+
 .dock-focus-pill {
   display: inline-flex;
   align-items: center;
@@ -3620,6 +3645,594 @@
   white-space: nowrap;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   STASH EDGE SHELF — Universal Drop Zone & Snippet Tray (v1.9.0)
+══════════════════════════════════════════════════════════════════════════ */
 
+/* Edge Tab Pill */
+.stash-edge-trigger {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 370;
+  display: flex;
+  align-items: center;
+  transition: transform var(--t-md) var(--spring);
+}
 
+.stash-tab-pill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 8px 8px 10px;
+  border-radius: 18px 0 0 18px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(26, 25, 22, 0.12);
+  border-right: none;
+  backdrop-filter: blur(24px) saturate(1.6);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  box-shadow: -2px 4px 18px rgba(0, 0, 0, 0.08);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: all var(--t-sm) var(--spring);
+}
 
+.stash-tab-pill:hover {
+  padding-left: 14px;
+  background: rgba(255, 255, 255, 0.98);
+  color: var(--ink);
+  box-shadow: -4px 6px 24px rgba(0, 0, 0, 0.12);
+}
+
+.desktop.theme-dark .stash-tab-pill {
+  background: rgba(28, 25, 18, 0.88);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: -2px 4px 18px rgba(0, 0, 0, 0.4);
+  color: rgba(240, 237, 228, 0.85);
+}
+
+.desktop.theme-dark .stash-tab-pill:hover {
+  background: rgba(34, 30, 22, 0.98);
+  color: #fff;
+}
+
+.stash-tab-icon {
+  color: #eab308;
+  filter: drop-shadow(0 0 4px rgba(234, 179, 8, 0.4));
+}
+
+.stash-tab-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* Edge Slide-out Shelf Container */
+.stash-shelf {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: min(380px, calc(100vw - 32px));
+  z-index: 375;
+  display: flex;
+  flex-direction: column;
+  background: rgba(252, 250, 247, 0.96);
+  border-left: 1px solid rgba(26, 25, 22, 0.1);
+  backdrop-filter: blur(36px) saturate(1.7);
+  -webkit-backdrop-filter: blur(36px) saturate(1.7);
+  box-shadow: -10px 0 38px rgba(0, 0, 0, 0.1);
+  transform: translateX(100%);
+  transition: transform 0.28s var(--ease-out), box-shadow 0.28s;
+  overflow: hidden;
+}
+
+.stash-shelf.is-open {
+  transform: translateX(0);
+}
+
+.desktop.theme-dark .stash-shelf {
+  background: rgba(20, 18, 12, 0.96);
+  border-left-color: rgba(255, 255, 255, 0.08);
+  box-shadow: -10px 0 42px rgba(0, 0, 0, 0.55);
+}
+
+/* Header */
+.stash-shelf-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper-2);
+}
+
+.desktop.theme-dark .stash-shelf-header {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.stash-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.stash-brand-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  background: rgba(234, 179, 8, 0.16);
+  color: #ca8a04;
+  border: 1px solid rgba(234, 179, 8, 0.28);
+}
+
+.desktop.theme-dark .stash-brand-icon {
+  background: rgba(234, 179, 8, 0.18);
+  color: #facc15;
+}
+
+.stash-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stash-title {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: -0.2px;
+  color: var(--ink);
+}
+
+.stash-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  background: rgba(26, 25, 22, 0.08);
+  color: var(--ink-2);
+}
+
+.desktop.theme-dark .stash-badge {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink-2);
+}
+
+.stash-subtitle {
+  font-size: 10.5px;
+  color: var(--ink-4);
+}
+
+.stash-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stash-hdr-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: all var(--t-xs);
+}
+
+.stash-hdr-btn:hover {
+  background: rgba(26, 25, 22, 0.07);
+  color: var(--ink);
+}
+
+.desktop.theme-dark .stash-hdr-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+/* Quick Input */
+.stash-input-box {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--paper);
+}
+
+.stash-input-area {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--rule);
+  background: var(--paper-2);
+  color: var(--ink);
+  font: 400 12.5px var(--font-body);
+  resize: none;
+  outline: none;
+  transition: border-color var(--t-sm);
+}
+
+.stash-input-area:focus {
+  border-color: rgba(91, 71, 168, 0.4);
+}
+
+.stash-input-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stash-hint {
+  font-size: 10.5px;
+  color: var(--ink-4);
+}
+
+.stash-submit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  border: 1px solid rgba(26, 25, 22, 0.12);
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity var(--t-xs);
+}
+
+.stash-submit-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Filter pills */
+.stash-filters {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--rule);
+  scrollbar-width: none;
+}
+
+.stash-filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: var(--r-pill);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.stash-filter-pill:hover {
+  background: rgba(26, 25, 22, 0.05);
+  color: var(--ink);
+}
+
+.stash-filter-pill.is-active {
+  background: var(--pill-lavender-bg);
+  border-color: rgba(91, 71, 168, 0.2);
+  color: var(--pill-lavender-ink);
+  font-weight: 600;
+}
+
+.pill-count {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  opacity: 0.8;
+}
+
+/* Scroll area */
+.stash-cards-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 12px;
+  position: relative;
+}
+
+/* Drop Overlay */
+.stash-drop-overlay {
+  position: absolute;
+  inset: 8px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 2px dashed #eab308;
+  border-radius: var(--r-lg);
+  background: rgba(254, 240, 138, 0.9);
+  color: #854d0e;
+  font-size: 13px;
+  font-weight: 600;
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+  animation: overlay-in 0.15s ease-out;
+}
+
+.desktop.theme-dark .stash-drop-overlay {
+  background: rgba(66, 48, 4, 0.92);
+  color: #fef08a;
+  border-color: #facc15;
+}
+
+/* Card list */
+.stash-cards-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stash-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  transition: transform var(--t-xs), box-shadow var(--t-xs), border-color var(--t-xs);
+  cursor: grab;
+}
+
+.stash-card:hover {
+  border-color: rgba(26, 25, 22, 0.2);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.06);
+  transform: translateY(-1px);
+}
+
+.desktop.theme-dark .stash-card {
+  background: rgba(30, 27, 18, 0.7);
+}
+
+.desktop.theme-dark .stash-card:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.stash-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stash-card-kind-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--ink-3);
+}
+
+.color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.stash-card-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.card-mini-btn {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-sm);
+  border: none;
+  background: transparent;
+  color: var(--ink-4);
+  cursor: pointer;
+  transition: all var(--t-xs);
+}
+
+.card-mini-btn:hover {
+  background: rgba(26, 25, 22, 0.08);
+  color: var(--ink);
+}
+
+.card-mini-btn.remove:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+}
+
+/* Card Body Previews */
+.stash-card-body {
+  font-size: 12px;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.stash-text-preview {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.45;
+}
+
+.stash-code-preview {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-x: auto;
+  max-height: 140px;
+}
+
+.stash-color-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.color-block {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-sm);
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  flex-shrink: 0;
+}
+
+.color-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.color-val {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.color-hint {
+  font-size: 10.5px;
+  color: var(--ink-4);
+}
+
+.stash-url-preview,
+.stash-yt-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.url-title,
+.yt-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.url-link,
+.yt-url {
+  font-size: 10.5px;
+  color: var(--ink-4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Quick Conversion Actions */
+.stash-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-top: 6px;
+  border-top: 1px solid var(--rule);
+}
+
+.stash-act-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--rule);
+  background: var(--paper-2);
+  color: var(--ink-2);
+  font-size: 10.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--t-xs);
+}
+
+.stash-act-btn:hover {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+
+/* Empty State */
+.stash-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px 16px;
+  color: var(--ink-4);
+}
+
+.stash-empty-glyph {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(26, 25, 22, 0.04);
+  display: grid;
+  place-items: center;
+  margin-bottom: 12px;
+  color: var(--ink-3);
+}
+
+.desktop.theme-dark .stash-empty-glyph {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.stash-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  margin: 0 0 6px;
+}
+
+.stash-empty-desc {
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  max-width: 260px;
+}
+
+/* Toast */
+.stash-toast {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 11.5px;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  animation: overlay-in 0.15s ease-out;
+  pointer-events: none;
+  white-space: nowrap;
+}

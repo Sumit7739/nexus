@@ -30,7 +30,9 @@ import {
   StickyNote,
   Trash2,
   X,
+  Zap,
 } from 'lucide-react';
+import { stashItem } from '../data/stash';
 import { ShortcutFavicon } from '../components/ShortcutFavicon';
 import { SelectionActionBar } from '../components/SelectionActionBar';
 import {
@@ -1304,6 +1306,26 @@ export function BrowserApp({ settings }: { settings?: SettingsProps }) {
                   clearDomSelection();
                   if (nextQuery) {
                     openNewTab({ kind: 'search', query: nextQuery, engine: 'ai' }, true);
+                  }
+                },
+              },
+              {
+                id: 'stash-selection',
+                label: 'Stash',
+                icon: <Zap size={12} />,
+                title: 'Drop snippet onto the Stash Edge Shelf',
+                onSelect: () => {
+                  const item = stashItem({
+                    content: browserSelection.text,
+                    source: {
+                      title: browserSelection.source?.title || 'Browser snippet',
+                      url: browserSelection.source?.url,
+                    },
+                    openShelf: true,
+                  });
+                  clearDomSelection();
+                  if (item) {
+                    showClipFeedback(`Stashed ${item.kind} card`);
                   }
                 },
               },

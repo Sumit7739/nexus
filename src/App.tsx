@@ -29,7 +29,7 @@ import {
   StickyNote,
   Sun, Moon, LogOut, RefreshCw, ChevronLeft, ChevronRight as ChevronR,
   History, Sparkles, CheckCircle2, Wrench, MinusCircle, Image, ExternalLink,
-  Move, EyeOff, Code2, Timer,
+  Move, EyeOff, Code2, Timer, Zap,
 } from 'lucide-react';
 import {
   CURRENT_RELEASE,
@@ -144,6 +144,15 @@ import {
 } from './data/spaces';
 import { SpacesPopover } from './components/SpacesPopover';
 import { FocusPopover } from './components/FocusPopover';
+import { StashEdgeShelf } from './components/StashEdgeShelf';
+import {
+  closeStashShelf,
+  getStashState,
+  openStashShelf,
+  stashItem,
+  subscribeStashState,
+  toggleStashShelf,
+} from './data/stash';
 import {
   completeLinkedScratchpadTask,
   consumeFocusDeclutteredWindows,
@@ -900,6 +909,7 @@ function TrayMenu({ now, theme, hasPassword, onToggleTheme, onLock, onSetupPassw
 export function App() {
   const music = useSyncExternalStore(subscribeMusicState, getMusicState);
   const focus = useSyncExternalStore(subscribeFocusState, getFocusState);
+  const stash = useSyncExternalStore(subscribeStashState, getStashState);
   const [passwordRecord, setPasswordRecord] = useState<PasscodeRecord | null>(readPasscodeRecord);
   const [initialSplashMs] = useState<number>(getInitialSplashDelayMs);
   const [screen, setScreen] = useState<EntryScreen>(() =>
@@ -1586,6 +1596,10 @@ export function App() {
           closeFocusPopover(true);
           return;
         }
+        if (getStashState().isOpen) {
+          closeStashShelf();
+          return;
+        }
         if (menuOpen) {
           if (launcherActionMenu) {
             setLauncherActionMenu(null);
@@ -1630,6 +1644,22 @@ export function App() {
               return;
             }
           }
+        }
+      }
+
+      /* Alt + S: Toggle Stash Edge Shelf */
+      if (e.altKey && !e.metaKey && !e.shiftKey && screen === 'desktop' && e.key.toLowerCase() === 's') {
+        const activeEl = document.activeElement as HTMLElement | null;
+        const inEditable =
+          Boolean(activeEl) &&
+          (activeEl?.tagName === 'INPUT' ||
+            activeEl?.tagName === 'TEXTAREA' ||
+            activeEl?.tagName === 'SELECT' ||
+            activeEl?.isContentEditable);
+        if (!inEditable || e.ctrlKey) {
+          e.preventDefault();
+          toggleStashShelf();
+          return;
         }
       }
 
@@ -2417,6 +2447,23 @@ export function App() {
           setSpotlightOpen(false);
           setFocusOpen(true);
           return;
+        case 'stash-item':
+          stashItem({
+            content: cmd.content,
+            title: cmd.title,
+            source: { title: 'Spotlight' },
+            openShelf: true,
+          });
+          closeSpotlight(true);
+          return;
+        case 'toggle-stash':
+          toggleStashShelf();
+          closeSpotlight(true);
+          return;
+        case 'open-stash':
+          openStashShelf();
+          closeSpotlight(true);
+          return;
       }
     },
     [
@@ -2445,6 +2492,7 @@ export function App() {
     if (spotlightOpen) closeSpotlight(false);
     if (spacesOpen) closeSpacesPopover(false);
     if (focusOpen) closeFocusPopover(false);
+    if (getStashState().isOpen) closeStashShelf();
     setLauncherActionMenu(null); setIconActionMenu(null); setDockActionMenu(null);
     setSelectedIcon(null); setCtxMenu(null); setTrayOpen(false);
   };
@@ -2471,7 +2519,7 @@ export function App() {
     const target = e.target as HTMLElement;
     if (
       target.closest(
-        '.desktop-icon,.wf,.app-launcher,.spaces-popover,.focus-popover,.ctx-menu,.tray-menu,.dock,.desktop-tray,.desktop-widget,.arrange-banner,.spotlight-modal,.changelog-modal,.setup-card,.desktop-mini-player'
+        '.desktop-icon,.wf,.app-launcher,.spaces-popover,.focus-popover,.stash-shelf,.stash-edge-trigger,.ctx-menu,.tray-menu,.dock,.desktop-tray,.desktop-widget,.arrange-banner,.spotlight-modal,.changelog-modal,.setup-card,.desktop-mini-player'
       )
     ) {
       return;
@@ -3126,6 +3174,12 @@ export function App() {
         />
       )}
 
+      {/* ── Stash Edge Shelf — Universal Drop Zone & Snippet Tray ── */}
+      <StashEdgeShelf
+        onOpenApp={(id) => openApp(id as AppId, true)}
+        onOpenExternalUrl={(url) => window.open(url, '_blank', 'noopener,noreferrer')}
+      />
+
       {/* ── Desktop icon right-click menu (rendered at desktop root) ── */}
       {iconActionMenu && activeDesktopMenuApp && (() => {
         const clampedIconPos = clampMenuPosition(
@@ -3465,6 +3519,24 @@ export function App() {
               ? `${focus.intention || 'Focus'}`
               : 'Focus Ritual'}
           </span>
+        </button>
+        <button
+          type="button"
+          className={`dock-item dock-stash ${stash.isOpen ? 'is-active' : ''}`}
+          onClick={e => {
+            e.stopPropagation();
+            toggleStashShelf();
+          }}
+          aria-label={`Stash Edge Shelf — ${stash.items.length} stashed cards`}
+          title={`Stash · ${stash.items.length} card${stash.items.length === 1 ? '' : 's'} (Alt+S)`}
+        >
+          <span className="dock-icon dock-stash-icon">
+            <Zap size={17} strokeWidth={1.5} />
+            {stash.items.length > 0 && (
+              <span className="dock-stash-badge">{stash.items.length}</span>
+            )}
+          </span>
+          <span className="dock-label">Stash ({stash.items.length})</span>
         </button>
         <div className="dock-sep" />
         {dockAppIds.map(id => {

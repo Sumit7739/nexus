@@ -556,7 +556,7 @@ export function instantiateTemplate(template: WidgetTemplate, existingCount: num
   };
 }
 
-export type ApiReferenceCategory = 'Music' | 'Lifecycle' | 'Theme' | 'Storage' | 'Navigation';
+export type ApiReferenceCategory = 'Core' | 'Music' | 'Lifecycle' | 'Theme' | 'Storage' | 'Navigation' | 'NEXUS.notes' | 'NEXUS.shortcuts' | 'NEXUS.dayline';
 
 export interface ApiReferenceEntry {
   id: string;
@@ -568,6 +568,54 @@ export interface ApiReferenceEntry {
 }
 
 export const WIDGET_API_ENTRIES: ApiReferenceEntry[] = [
+  {
+    id: 'core-data',
+    category: 'Core',
+    title: 'Read widget data and state',
+    signature: 'NEXUS.data · NEXUS.getState() · NEXUS.setState(state)',
+    description: 'Reads the parsed widget.json data and restores per-widget state. setState persists JSON-serializable state through the host.',
+    snippet: `const config = NEXUS.data;\nlet state = NEXUS.getState() || { clicks: 0 };\nNEXUS.setState({ ...state, clicks: state.clicks + 1 });`,
+  },
+  {
+    id: 'core-time',
+    category: 'Core',
+    title: 'Request the current time',
+    signature: "NEXUS.time() · 'nexus:time'",
+    description: 'Asks the host for an ISO timestamp. Listen for nexus:time to receive the response.',
+    snippet: `NEXUS.time();\nwindow.addEventListener('nexus:time', (event) => {\n  console.log(new Date(event.detail));\n});`,
+  },
+  {
+    id: 'core-notify',
+    category: 'Core',
+    title: 'Show a host notice',
+    signature: 'NEXUS.notify(message)',
+    description: 'Sends a short status message to the widget host.',
+    snippet: `NEXUS.notify('Saved locally');`,
+  },
+  {
+    id: 'notes-bridge',
+    category: 'NEXUS.notes',
+    title: 'Read and check off Scratchpad tasks',
+    signature: 'NEXUS.notes.list() · NEXUS.notes.toggleTask(noteId, lineIndex)',
+    description: 'Reads note summaries and toggles a real Markdown checklist line in Scratchpad. Both methods return Promises because widgets run in a sandboxed iframe.',
+    snippet: `const notes = await NEXUS.notes.list();\nconst taskNote = notes.find(note => note.content.includes('- [ ]'));\nif (taskNote) await NEXUS.notes.toggleTask(taskNote.id, 0);`,
+  },
+  {
+    id: 'shortcuts-bridge',
+    category: 'NEXUS.shortcuts',
+    title: 'Read and launch Saved Links',
+    signature: 'NEXUS.shortcuts.list() · NEXUS.shortcuts.open(id)',
+    description: 'Reads the user’s validated Saved Links and asks the host to open one by ID. URLs are validated by the desktop host.',
+    snippet: `const links = await NEXUS.shortcuts.list();\nconst github = links.find(link => link.title === 'GitHub');\nif (github) await NEXUS.shortcuts.open(github.id);`,
+  },
+  {
+    id: 'dayline-bridge',
+    category: 'NEXUS.dayline',
+    title: 'Read and edit today’s time blocks',
+    signature: 'NEXUS.dayline.getState() · NEXUS.dayline.addBlock(hour, task) · NEXUS.dayline.updateBlock(hour, task) · NEXUS.dayline.toggleBlock(hour)',
+    description: 'Reads and edits the current local Dayline plan. Hours use HH:00, and methods return Promises across the sandboxed iframe boundary.',
+    snippet: `const plan = await NEXUS.dayline.getState();\nawait NEXUS.dayline.addBlock('09:00', 'Review the launch checklist');\nawait NEXUS.dayline.toggleBlock('09:00');`,
+  },
   {
     id: 'music-state',
     category: 'Music',
@@ -639,6 +687,14 @@ export const WIDGET_API_ENTRIES: ApiReferenceEntry[] = [
     snippet: `const theme = NEXUS.getTheme();\nwindow.addEventListener('nexus:theme', (e) => {\n  console.log('Switched to:', e.detail);\n});`,
   },
   {
+    id: 'theme-contract',
+    category: 'Theme',
+    title: 'Build automatic theme support',
+    signature: "NEXUS.getTheme() · 'nexus:theme' · body[data-theme=\"dark\"]",
+    description: 'Widgets should style both themes and react to nexus:theme because the host can switch the desktop theme while the widget remains mounted.',
+    snippet: `function applyTheme(theme) {\n  document.documentElement.dataset.theme = theme;\n  document.body.dataset.theme = theme;\n}\napplyTheme(NEXUS.getTheme());\nwindow.addEventListener('nexus:theme', event => applyTheme(event.detail));`,
+  },
+  {
     id: 'theme-set',
     category: 'Theme',
     title: 'Switch workspace theme',
@@ -670,5 +726,12 @@ export const WIDGET_API_ENTRIES: ApiReferenceEntry[] = [
     description: 'Opens a built-in Nexus app window (browser, youtube, music, notes, bookmarks, widgets, settings) or an HTTPS link.',
     snippet: `NEXUS.openApp('music');\nNEXUS.openUrl('https://example.com');`,
   },
+  {
+    id: 'stash',
+    category: 'Navigation',
+    title: 'Send content to Stash',
+    signature: 'NEXUS.stash(content, options?) · NEXUS.openStash()',
+    description: 'Adds a temporary card to the Stash shelf or opens the shelf without creating a card.',
+    snippet: `NEXUS.stash('https://example.com', { title: 'Read later' });\nNEXUS.openStash();`,
+  },
 ];
-

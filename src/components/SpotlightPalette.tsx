@@ -44,6 +44,7 @@ import {
   Timer,
   Volume2,
   X,
+  Zap,
 } from 'lucide-react';
 import type { AppDefinition } from '../apps/app-types';
 import { AppIconGraphic } from './ShortcutFavicon';
@@ -197,6 +198,8 @@ function SpotlightRowIcon({
         return <CloudRain size={15} strokeWidth={1.6} />;
       case 'focus':
         return <Timer size={15} strokeWidth={1.6} />;
+      case 'stash':
+        return <Zap size={15} strokeWidth={1.6} />;
       default:
         return <Search size={15} strokeWidth={1.6} />;
     }

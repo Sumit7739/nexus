@@ -5,6 +5,10 @@ import {
   subscribeMusicState,
 } from '../data/media';
 import { subscribeSoundscapeState } from '../data/soundscape';
+import { openStashShelf, stashItem } from '../data/stash';
+import { readNotesState, saveNotesState, toggleChecklistLine } from '../data/notes';
+import { readShortcuts } from '../data/shortcuts';
+import { getDaylineDate, readDaylineState, saveDaylineState } from '../data/dayline';
 import type { WidgetDefinition } from './types';
 import { parseWidgetJson } from './types';
 
@@ -49,6 +53,12 @@ let NEXUS_THEME = ${JSON.stringify(theme)};
 let NEXUS_LOCAL = ${initialLocal};
 let NEXUS_MUSIC = ${initialMusic};
 const sendMusicCmd = (action, cmdPayload) => parent.postMessage({ type: 'nexus:music-cmd', action, payload: cmdPayload }, '*');
+const pendingHostRequests = new Map();
+const requestHost = (type, payload) => new Promise((resolve) => {
+  const requestId = Math.random().toString(36).slice(2);
+  pendingHostRequests.set(requestId, resolve);
+  parent.postMessage({ type, requestId, payload }, '*');
+});
 const NEXUS = {
   data: NEXUS_DATA,
   getState: () => NEXUS_STATE,
@@ -61,6 +71,22 @@ const NEXUS = {
   removeLocal: (key) => parent.postMessage({ type: 'nexus:remove-local', key }, '*'),
   openApp: (appId) => parent.postMessage({ type: 'nexus:open-app', appId }, '*'),
   openUrl: (url) => parent.postMessage({ type: 'nexus:open-url', url }, '*'),
+  stash: (content, options) => parent.postMessage({ type: 'nexus:stash', content, title: options && typeof options === 'object' ? options.title : undefined }, '*'),
+  openStash: () => parent.postMessage({ type: 'nexus:open-stash' }, '*'),
+  notes: {
+    list: () => requestHost('nexus:notes-read'),
+    toggleTask: (noteId, lineIndex) => requestHost('nexus:notes-toggle-task', { noteId, lineIndex }),
+  },
+  shortcuts: {
+    list: () => requestHost('nexus:shortcuts-read'),
+    open: (id) => requestHost('nexus:shortcut-open', { id }),
+  },
+  dayline: {
+    getState: () => requestHost('nexus:dayline-read'),
+    addBlock: (hour, task) => requestHost('nexus:dayline-add-block', { hour, task }),
+    updateBlock: (hour, task) => requestHost('nexus:dayline-update-block', { hour, task }),
+    toggleBlock: (hour) => requestHost('nexus:dayline-toggle-block', { hour }),
+  },
   notify: (message) => parent.postMessage({ type: 'nexus:notify', message }, '*'),
   setState: (state) => { NEXUS_STATE = state; parent.postMessage({ type: 'nexus:set-state', state }, '*'); },
   getMusic: () => NEXUS_MUSIC,
@@ -100,6 +126,14 @@ const NEXUS = {
 window.NEXUS = NEXUS;
 window.addEventListener('message', (event) => {
   if (!event.data || typeof event.data.type !== 'string') return;
+  if (event.data.type === 'nexus:response' && typeof event.data.requestId === 'string') {
+    const resolve = pendingHostRequests.get(event.data.requestId);
+    if (resolve) {
+      pendingHostRequests.delete(event.data.requestId);
+      resolve(event.data.value);
+    }
+    return;
+  }
   if (event.data.type === 'nexus:ready') {
     if (Object.prototype.hasOwnProperty.call(event.data, 'state')) NEXUS_STATE = event.data.state;
     window.dispatchEvent(new CustomEvent('nexus:ready', { detail: { data: event.data.data ?? NEXUS_DATA, state: NEXUS_STATE, music: NEXUS_MUSIC } }));
@@ -174,6 +208,159 @@ export function WidgetRuntime({ widget, theme, onOpenApp, onOpenUrl }: Props) {
             }
           }
           break;
+        case 'nexus:stash':
+          if (typeof event.data.content === 'string' && event.data.content.trim()) {
+            stashItem({
+              content: event.data.content.trim(),
+              title: typeof event.data.title === 'string' ? event.data.title : undefined,
+              source: { title: `Widget: ${widget.name}` },
+              openShelf: true,
+            });
+          }
+          break;
+        case 'nexus:open-stash':
+          openStashShelf();
+          break;
+        case 'nexus:notes-read': {
+          const notes = readNotesState().notes.map(note => ({
+            id: note.id,
+            title: note.title,
+            content: note.content,
+            updatedAt: note.updatedAt,
+          }));
+          frameRef.current?.contentWindow?.postMessage({
+            type: 'nexus:response',
+            requestId: event.data.requestId,
+            value: notes,
+          }, '*');
+          break;
+        }
+        case 'nexus:notes-toggle-task': {
+          const payload = event.data.payload;
+          const state = readNotesState();
+          const note = state.notes.find(item => item.id === payload?.noteId);
+          const lineIndex = payload?.lineIndex;
+          if (!note || !Number.isInteger(lineIndex)) break;
+          const updatedNote = {
+            ...note,
+            content: toggleChecklistLine(note.content, lineIndex),
+            updatedAt: Date.now(),
+          };
+          saveNotesState({
+            notes: state.notes.map(item => item.id === note.id ? updatedNote : item),
+            activeNoteId: state.activeNoteId,
+          });
+          window.dispatchEvent(new Event('storage'));
+          frameRef.current?.contentWindow?.postMessage({
+            type: 'nexus:response',
+            requestId: event.data.requestId,
+            value: { id: note.id, content: updatedNote.content },
+          }, '*');
+          break;
+        }
+        case 'nexus:shortcuts-read': {
+          const shortcuts = readShortcuts().map(shortcut => ({
+            id: shortcut.id,
+            title: shortcut.title,
+            url: shortcut.url,
+            mode: shortcut.mode,
+          }));
+          frameRef.current?.contentWindow?.postMessage({
+            type: 'nexus:response',
+            requestId: event.data.requestId,
+            value: shortcuts,
+          }, '*');
+          break;
+        }
+        case 'nexus:shortcut-open': {
+          const id = event.data.payload?.id;
+          const shortcut = typeof id === 'string' ? readShortcuts().find(item => item.id === id) : undefined;
+          if (!shortcut) break;
+          onOpenUrl(shortcut.url);
+          frameRef.current?.contentWindow?.postMessage({
+            type: 'nexus:response',
+            requestId: event.data.requestId,
+            value: { ok: true },
+          }, '*');
+          break;
+        }
+        case 'nexus:dayline-read': {
+          const date = getDaylineDate();
+          const state = readDaylineState();
+          frameRef.current?.contentWindow?.postMessage({
+            type: 'nexus:response',
+            requestId: event.data.requestId,
+            value: { ...(state.days[date] ?? { date, blocks: {} }), timezones: state.timezones },
+          }, '*');
+          break;
+        }
+        case 'nexus:dayline-add-block':
+        case 'nexus:dayline-update-block':
+        case 'nexus:dayline-toggle-block': {
+          const payload = event.data.payload;
+          const hour = typeof payload?.hour === 'string' && /^\d{2}:00$/.test(payload.hour) ? payload.hour : '';
+          const date = getDaylineDate();
+          const state = readDaylineState();
+          const day = state.days[date] ?? { date, blocks: {} };
+          const existing = day.blocks[hour];
+          if (!hour || (event.data.type !== 'nexus:dayline-toggle-block' && typeof payload?.task !== 'string')) break;
+          let block = event.data.type === 'nexus:dayline-toggle-block'
+            ? existing && { ...existing, completed: !existing.completed }
+            : {
+                id: existing?.id ?? `${date}-${hour}`,
+                task: payload.task.trim().slice(0, 500),
+                sourceNoteId: existing?.sourceNoteId ?? '',
+                sourceLineIndex: existing?.sourceLineIndex ?? -1,
+                completed: existing?.completed ?? false,
+              };
+          if (!block) break;
+          if (event.data.type === 'nexus:dayline-add-block' && !existing) {
+            const notesState = readNotesState();
+            const note = notesState.notes.find(item => item.id === notesState.activeNoteId) ?? notesState.notes[0];
+            if (note) {
+              const separator = note.content && !note.content.endsWith('\n') ? '\n' : '';
+              const content = `${note.content}${separator}- [ ] ${block.task}`;
+              const lines = content.split(/\r?\n/);
+              const sourceLineIndex = lines.length - 1;
+              saveNotesState({
+                ...notesState,
+                notes: notesState.notes.map(item => item.id === note.id
+                  ? { ...item, content, updatedAt: Date.now() }
+                  : item),
+              });
+              block = { ...block, sourceNoteId: note.id, sourceLineIndex };
+              window.dispatchEvent(new Event('storage'));
+            }
+          }
+          if (event.data.type === 'nexus:dayline-update-block' && existing?.sourceNoteId && existing.sourceLineIndex >= 0) {
+            const notesState = readNotesState();
+            const note = notesState.notes.find(item => item.id === existing.sourceNoteId);
+            if (note) {
+              const lines = note.content.split(/\r?\n/);
+              if (lines[existing.sourceLineIndex]) {
+                lines[existing.sourceLineIndex] = lines[existing.sourceLineIndex].replace(
+                  /(^\s*[-*]\s+\[[ xX]\]\s+).*/,
+                  `$1${block.task}`
+                );
+                saveNotesState({
+                  ...notesState,
+                  notes: notesState.notes.map(item => item.id === note.id
+                    ? { ...item, content: lines.join('\n'), updatedAt: Date.now() }
+                    : item),
+                });
+                window.dispatchEvent(new Event('storage'));
+              }
+            }
+          }
+          const nextState = { ...state, days: { ...state.days, [date]: { ...day, blocks: { ...day.blocks, [hour]: block } } } };
+          saveDaylineState(nextState);
+          frameRef.current?.contentWindow?.postMessage({
+            type: 'nexus:response',
+            requestId: event.data.requestId,
+            value: block,
+          }, '*');
+          break;
+        }
         case 'nexus:set-theme':
           if (event.data.theme === 'light' || event.data.theme === 'dark') {
             window.dispatchEvent(new CustomEvent('nexus:widget-theme-request', { detail: event.data.theme }));

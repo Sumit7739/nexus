@@ -103,7 +103,10 @@ export type SpotlightCommandPayload =
   | { type: 'focus-extend'; minutes: number }
   | { type: 'focus-complete-and-check' }
   | { type: 'focus-reset' }
-  | { type: 'open-focus-popover' };
+  | { type: 'open-focus-popover' }
+  | { type: 'stash-item'; content: string; title?: string }
+  | { type: 'toggle-stash' }
+  | { type: 'open-stash' };
 
 export type SpotlightIconKind =
   | 'app'
@@ -140,7 +143,8 @@ export type SpotlightIconKind =
   | 'launcher'
   | 'spaces'
   | 'soundscape'
-  | 'focus';
+  | 'focus'
+  | 'stash';
 
 export interface SpotlightItem {
   id: string;
@@ -679,6 +683,59 @@ export function buildSpotlightResults(ctx: SpotlightContext): SpotlightResults {
           formattedValue: math.formattedValue,
         },
       });
+      candidates.push({
+        id: 'math:stash',
+        section: 'math',
+        filterGroup: 'actions',
+        title: `Stash calculation "${math.expression} = ${math.formattedValue}"`,
+        subtitle: 'Save to Stash edge shelf',
+        keywords: 'stash math calculation save shelf',
+        iconKind: 'stash',
+        actionLabel: 'Stash result',
+        score: 480,
+        command: {
+          type: 'stash-item',
+          content: `${math.expression} = ${math.formattedValue}`,
+          title: `Calculation: ${math.formattedValue}`,
+        },
+      });
+    }
+
+    /* Stash command prefix: stash <content> */
+    const stashPrefixMatch = trimmedQuery.match(/^stash(?:\s+(.+))?$/i);
+    if (stashPrefixMatch) {
+      const stashContent = stashPrefixMatch[1]?.trim();
+      if (stashContent) {
+        candidates.push({
+          id: 'stash:custom-input',
+          section: 'actions',
+          filterGroup: 'actions',
+          title: `Stash "${stashContent}"`,
+          subtitle: 'Stash Edge Shelf · Save temporary snippet/link to edge shelf',
+          keywords: 'stash shelf save drop temporary clipboard card',
+          iconKind: 'stash',
+          actionLabel: 'Stash now',
+          score: 380,
+          command: {
+            type: 'stash-item',
+            content: stashContent,
+          },
+        });
+      } else {
+        candidates.push({
+          id: 'stash:open-shelf',
+          section: 'actions',
+          filterGroup: 'actions',
+          title: 'Open Stash Edge Shelf',
+          subtitle: 'Universal Drop Zone & Snippet Tray (Alt+S)',
+          keywords: 'stash shelf drop snippets tray cards open',
+          iconKind: 'stash',
+          shortcutKeys: ['Alt', 'S'],
+          actionLabel: 'Open shelf',
+          score: 380,
+          command: { type: 'open-stash' },
+        });
+      }
     }
   }
 
@@ -1710,6 +1767,16 @@ export function buildSpotlightResults(ctx: SpotlightContext): SpotlightResults {
       iconKind: 'launcher',
       defaultAllVisible: false,
       command: { type: 'open-launcher' },
+    },
+    {
+      id: 'action:toggle-stash',
+      title: 'Toggle Stash Edge Shelf',
+      subtitle: 'Universal Drop Zone & Snippet Tray (Alt+S)',
+      keywords: 'stash shelf drop snippets tray cards yoink raycast temporary',
+      iconKind: 'stash',
+      shortcutKeys: ['Alt', 'S'],
+      defaultAllVisible: true,
+      command: { type: 'toggle-stash' },
     },
   ];
 

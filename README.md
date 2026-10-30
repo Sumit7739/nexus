@@ -31,6 +31,9 @@ npm run build
 npm test
 ```
 
+`npm run dev` starts both the Vite UI and the Nexus API server. The UI runs on
+`http://localhost:5173` and the API runs on `http://localhost:3001`.
+
 Optional server-side integrations read credentials from a local `.env` file:
 
 ```bash

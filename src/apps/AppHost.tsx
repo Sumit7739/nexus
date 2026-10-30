@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
-  ArrowLeft, ArrowRight, ArrowUpRight, Bookmark, Check, ChevronDown, ChevronUp, Clock3, CloudRain, Copy, Crosshair, Disc3, Download, ExternalLink, Flame,
+  ArrowLeft, ArrowRight, ArrowUpRight, Bookmark, CalendarClock, Check, ChevronDown, ChevronUp, Clock3, CloudRain, Copy, Code2, Crosshair, Disc3, Download, ExternalLink, Flame, Sparkles,
   Globe2, HardDriveDownload, Headphones, Heart, Home, Layers, Link2, ListMusic, ListVideo, MessageSquareQuote, Monitor, MoonStar, Palette, Pause, Pencil, Pin, Play, Plus, RefreshCw, Repeat, Repeat1, RotateCcw, Search, Shield, Shuffle, SkipBack, SkipForward, StickyNote, Trash2, Tv, Upload, Volume2, VolumeX, Waves, Wind, X,
 } from 'lucide-react';
 import type { AppId, CoreAppId } from '../window-manager/types';
@@ -28,10 +28,18 @@ import {
   type ShortcutLaunchMode,
 } from '../data/shortcuts';
 import { ShortcutFavicon } from '../components/ShortcutFavicon';
+import {
+  getDaylineDate,
+  readDaylineState,
+  saveDaylineState,
+  type DaylineState,
+} from '../data/dayline';
+import { readNotesState, saveNotesState } from '../data/notes';
 import { BrowserApp } from './BrowserApp';
 import { ScratchpadApp } from './ScratchpadApp';
 import { NEXUS_VERSION } from '../data/version';
 import { requestOpenApp } from '../data/context-actions';
+import { generateWidgetWithPuter, type WidgetCrafterMessage } from '../data/puter-ai';
 import {
   addTrackToMusicPlaylist,
   buildTrackFromVideoId,
@@ -187,11 +195,336 @@ export function AppHost({ appId, settings }: { appId: AppId; settings?: Settings
     case 'youtube': return <YouTubeApp />;
     case 'music': return <MusicApp />;
     case 'notes': return <ScratchpadApp />;
+    case 'dayline': return <DaylineApp />;
     case 'bookmarks': return <BookmarksApp settings={settings} />;
     case 'settings': return settings ? <SettingsApp settings={settings} /> : <div className="empty-state"><span>Settings unavailable.</span></div>;
     case 'widgets': return settings ? <WidgetStudioApp settings={settings} /> : <div className="empty-state"><span>Widget Studio unavailable.</span></div>;
     default: return <div className="empty-state"><span>App not found.</span></div>;
   }
+}
+
+function DaylineApp() {
+  const date = getDaylineDate();
+  const [notes, setNotes] = useState(() => readNotesState());
+  const [state, setState] = useState<DaylineState>(() => readDaylineState());
+  const [draggedTask, setDraggedTask] = useState<{ noteId: string; lineIndex: number; text: string } | null>(null);
+  const [weather, setWeather] = useState<{ temperature: number; description: string } | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [weatherError, setWeatherError] = useState('');
+  const [newTimezone, setNewTimezone] = useState('');
+  const today = state.days[date] ?? { date, blocks: {} };
+
+  const tasks = useMemo(() => {
+    const result: Array<{ noteId: string; lineIndex: number; text: string; checked: boolean }> = [];
+    for (const note of notes.notes) {
+      note.content.split(/\r?\n/).forEach((line, lineIndex) => {
+        const match = line.match(/^(\s*)[-*]\s+\[([ xX])\]\s+(.*)$/);
+        if (match?.[3]?.trim()) {
+          result.push({ noteId: note.id, lineIndex, text: match[3].trim(), checked: match[2].toLowerCase() === 'x' });
+        }
+      });
+    }
+    return result;
+  }, [notes]);
+
+  const persist = useCallback((next: DaylineState) => {
+    setState(next);
+    saveDaylineState(next);
+  }, []);
+
+  const assignTask = useCallback((hour: string) => {
+    if (!draggedTask) return;
+    const nextDay = {
+      ...today,
+      blocks: {
+        ...today.blocks,
+        [hour]: {
+          id: `${date}-${hour}`,
+          task: draggedTask.text,
+          sourceNoteId: draggedTask.noteId,
+          sourceLineIndex: draggedTask.lineIndex,
+          completed: false,
+        },
+      },
+    };
+    persist({ ...state, days: { ...state.days, [date]: nextDay } });
+    setDraggedTask(null);
+  }, [date, draggedTask, persist, state, today]);
+
+  const assignLinkedTask = useCallback((hour: string, task: { noteId: string; lineIndex: number; text: string }) => {
+    const nextDay = {
+      ...today,
+      blocks: {
+        ...today.blocks,
+        [hour]: {
+          id: `${date}-${hour}`,
+          task: task.text,
+          sourceNoteId: task.noteId,
+          sourceLineIndex: task.lineIndex,
+          completed: false,
+        },
+      },
+    };
+    persist({ ...state, days: { ...state.days, [date]: nextDay } });
+    setDraggedTask(null);
+  }, [date, persist, state, today]);
+
+  const assignText = useCallback((hour: string, rawText: string) => {
+    const text = rawText.replace(/\s+/g, ' ').trim().slice(0, 500);
+    if (!text) return;
+    const currentNotes = readNotesState();
+    const note = currentNotes.notes.find(item => item.id === currentNotes.activeNoteId) ?? currentNotes.notes[0];
+    if (!note) return;
+    const separator = note.content && !note.content.endsWith('\n') ? '\n' : '';
+    const nextContent = `${note.content}${separator}- [ ] ${text}`;
+    const sourceLineIndex = nextContent.split(/\r?\n/).length - 1;
+    const nextNotes = {
+      ...currentNotes,
+      notes: currentNotes.notes.map(item => item.id === note.id
+        ? { ...item, content: nextContent, updatedAt: Date.now() }
+        : item),
+    };
+    saveNotesState(nextNotes);
+    setNotes(nextNotes);
+    const nextDay = {
+      ...today,
+      blocks: {
+        ...today.blocks,
+        [hour]: {
+          id: `${date}-${hour}`,
+          task: text,
+          sourceNoteId: note.id,
+          sourceLineIndex,
+          completed: false,
+        },
+      },
+    };
+    persist({ ...state, days: { ...state.days, [date]: nextDay } });
+  }, [date, persist, state, today]);
+
+  const editBlock = useCallback((hour: string, rawText: string) => {
+    const block = today.blocks[hour];
+    const text = rawText.replace(/\s+/g, ' ').trim().slice(0, 500);
+    if (!block || !text || text === block.task) return;
+    const nextDay = { ...today, blocks: { ...today.blocks, [hour]: { ...block, task: text } } };
+    persist({ ...state, days: { ...state.days, [date]: nextDay } });
+    const currentNotes = readNotesState();
+    const note = currentNotes.notes.find(item => item.id === block.sourceNoteId);
+    if (!note) return;
+    const lines = note.content.split(/\r?\n/);
+    if (!lines[block.sourceLineIndex]) return;
+    lines[block.sourceLineIndex] = lines[block.sourceLineIndex].replace(/(^\s*[-*]\s+\[[ xX]\]\s+).*/, `$1${text}`);
+    const nextNotes = {
+      ...currentNotes,
+      notes: currentNotes.notes.map(item => item.id === note.id
+        ? { ...item, content: lines.join('\n'), updatedAt: Date.now() }
+        : item),
+    };
+    saveNotesState(nextNotes);
+    setNotes(nextNotes);
+  }, [date, persist, state, today]);
+
+  const removeBlock = useCallback((hour: string) => {
+    const nextDay = { ...today, blocks: { ...today.blocks } };
+    delete nextDay.blocks[hour];
+    persist({ ...state, days: { ...state.days, [date]: nextDay } });
+  }, [date, persist, state, today]);
+
+  const toggleBlock = useCallback((hour: string) => {
+    const block = today.blocks[hour];
+    if (!block) return;
+    const completed = !block.completed;
+    const nextDay = { ...today, blocks: { ...today.blocks, [hour]: { ...block, completed } } };
+    persist({ ...state, days: { ...state.days, [date]: nextDay } });
+    if (completed) {
+      const currentNotes = readNotesState();
+      const note = currentNotes.notes.find(item => item.id === block.sourceNoteId);
+      if (note) {
+        const lines = note.content.split(/\r?\n/);
+        const line = lines[block.sourceLineIndex];
+        if (line) {
+          lines[block.sourceLineIndex] = line.replace(/^(\s*[-*]\s+\[)([ xX])(\])/, '$1x$3');
+          const nextNotes = {
+            ...currentNotes,
+            notes: currentNotes.notes.map(item => item.id === note.id
+              ? { ...item, content: lines.join('\n'), updatedAt: Date.now() }
+              : item),
+          };
+          saveNotesState(nextNotes);
+          setNotes(nextNotes);
+        }
+      }
+    }
+  }, [date, persist, state, today]);
+
+  const addTimezone = () => {
+    const zone = newTimezone.trim();
+    if (!zone || state.timezones.includes(zone) || state.timezones.length >= 6) return;
+    try {
+      new Intl.DateTimeFormat(undefined, { timeZone: zone }).format();
+      persist({ ...state, timezones: [...state.timezones, zone] });
+      setNewTimezone('');
+    } catch {
+      setNewTimezone('');
+    }
+  };
+
+  const loadWeather = async () => {
+    if (!state.weatherLocation.trim()) return;
+    setWeatherLoading(true);
+    setWeatherError('');
+    try {
+      const geoResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(state.weatherLocation)}&count=1`);
+      const geo = (await geoResponse.json()) as { results?: Array<{ latitude: number; longitude: number }> };
+      const place = geo.results?.[0];
+      if (!place) return;
+      const weatherResponse = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}&current=temperature_2m,weather_code`);
+      const current = (await weatherResponse.json()) as { current?: { temperature_2m?: number; weather_code?: number } };
+      if (typeof current.current?.temperature_2m === 'number') {
+        setWeather({ temperature: current.current.temperature_2m, description: `Code ${current.current.weather_code ?? 0}` });
+      }
+      else setWeatherError('Weather unavailable');
+    } catch {
+      setWeatherError('Weather unavailable');
+    } finally {
+      setWeatherLoading(false);
+    }
+  };
+
+  return (
+    <div className="dayline-app">
+      <header className="dayline-header">
+        <div>
+          <span className="eyebrow"><CalendarClock size={12} /> Dayline</span>
+          <h2>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</h2>
+          <p>Drag unchecked Scratchpad tasks onto your day.</p>
+        </div>
+        <div className="dayline-weather">
+          <input
+            value={state.weatherLocation}
+            placeholder="Weather city"
+            onChange={event => persist({ ...state, weatherLocation: event.target.value })}
+            onKeyDown={event => { if (event.key === 'Enter') void loadWeather(); }}
+          />
+          <button type="button" className="secondary-btn" onClick={() => void loadWeather()} disabled={weatherLoading}>
+            <CloudRain size={13} /> {weather ? `${weather.temperature}° · ${weather.description}` : weatherError || 'Weather'}
+          </button>
+        </div>
+      </header>
+      <div className="dayline-layout">
+        <aside className="dayline-tasks">
+          <div className="dayline-panel-heading"><strong>Scratchpad tasks</strong><span>{tasks.filter(task => !task.checked).length} open</span></div>
+          {tasks.filter(task => !task.checked).map(task => (
+            <div
+              className="dayline-task"
+              draggable
+              key={`${task.noteId}-${task.lineIndex}`}
+              onDragStart={event => {
+                setDraggedTask(task);
+                event.dataTransfer.effectAllowed = 'copy';
+                event.dataTransfer.setData('text/plain', task.text);
+                event.dataTransfer.setData('application/x-nexus-scratchpad-task', JSON.stringify({
+                  noteId: task.noteId,
+                  lineIndex: task.lineIndex,
+                  text: task.text,
+                }));
+              }}
+            >
+              <span className="dayline-drag-handle">::</span>{task.text}
+            </div>
+          ))}
+          {tasks.every(task => task.checked || !task.text) && <p className="dayline-empty">Add unchecked tasks in Scratchpad to plan them here.</p>}
+        </aside>
+        <main className="dayline-timeline">
+          {Array.from({ length: 24 }, (_, hour) => {
+            const key = `${String(hour).padStart(2, '0')}:00`;
+            const block = today.blocks[key];
+            return (
+              <div
+                className={`dayline-slot ${block ? 'has-task' : ''}`}
+                key={key}
+                onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; }}
+                onDrop={event => {
+                  event.preventDefault();
+                  const linked = event.dataTransfer.getData('application/x-nexus-scratchpad-task');
+                  if (linked) {
+                    try {
+                      const task = JSON.parse(linked) as { noteId?: string; lineIndex?: number; text?: string };
+                      if (task.noteId && typeof task.lineIndex === 'number' && task.text) {
+                        assignLinkedTask(key, { noteId: task.noteId, lineIndex: task.lineIndex, text: task.text });
+                        return;
+                      }
+                    } catch {
+                      /* Fall through to plain text handling. */
+                    }
+                  }
+                  const dropped = event.dataTransfer.getData('text/plain');
+                  if (dropped) assignText(key, dropped);
+                  else assignTask(key);
+                }}
+                onPaste={event => {
+                  const pasted = event.clipboardData.getData('text/plain');
+                  if (pasted) {
+                    event.preventDefault();
+                    assignText(key, pasted);
+                  }
+                }}
+              >
+                <time>{key}</time>
+                {block ? (
+                  <div className={`dayline-block ${block.completed ? 'is-complete' : ''}`}>
+                    <button type="button" className="dayline-check" onClick={() => toggleBlock(key)} aria-label="Toggle task completion">
+                      <Check size={13} />
+                    </button>
+                    <input
+                      value={block.task}
+                      aria-label={`Edit ${key} task`}
+                      onChange={event => {
+                        const nextDay = { ...today, blocks: { ...today.blocks, [key]: { ...block, task: event.target.value } } };
+                        setState({ ...state, days: { ...state.days, [date]: nextDay } });
+                      }}
+                      onBlur={event => editBlock(key, event.target.value)}
+                      onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }}
+                    />
+                    <button type="button" className="dayline-remove" onClick={() => removeBlock(key)} aria-label="Remove time block">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="dayline-empty-slot">
+                    <input
+                      placeholder="Drop or type a task"
+                      aria-label={`Add task at ${key}`}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter') {
+                          assignText(key, event.currentTarget.value);
+                          event.currentTarget.value = '';
+                        }
+                      }}
+                    />
+                    <span className="dayline-drop-hint">Drop text here</span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </main>
+        <aside className="dayline-zones">
+          <div className="dayline-panel-heading"><strong>Team clocks</strong><span>Local</span></div>
+          {state.timezones.map(zone => (
+            <div className="dayline-clock" key={zone}>
+              <span>{zone}</span>
+              <strong>{new Intl.DateTimeFormat(undefined, { timeZone: zone, hour: '2-digit', minute: '2-digit' }).format()}</strong>
+            </div>
+          ))}
+          <div className="dayline-add-zone">
+            <input value={newTimezone} placeholder="e.g. Asia/Kolkata" onChange={event => setNewTimezone(event.target.value)} />
+            <button type="button" className="icon-btn" onClick={addTimezone} aria-label="Add timezone"><Plus size={13} /></button>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
 }
 
 /* ── Shortcut Web App Window ──────────────────────────────────────────────── */
@@ -3198,11 +3531,15 @@ const VALID_CORE_APP_IDS: CoreAppId[] = ['browser', 'youtube', 'music', 'notes',
 
 const API_CATEGORIES: readonly ('All' | ApiReferenceCategory)[] = [
   'All',
+  'Core',
   'Music',
   'Lifecycle',
   'Theme',
   'Storage',
   'Navigation',
+  'NEXUS.notes',
+  'NEXUS.shortcuts',
+  'NEXUS.dayline',
 ];
 
 function openExternalUrlSafe(url: string): void {
@@ -3228,6 +3565,10 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [apiCategory, setApiCategory] = useState<'All' | ApiReferenceCategory>('All');
   const [apiQuery, setApiQuery] = useState('');
+  const [crafterPrompt, setCrafterPrompt] = useState('');
+  const [crafterBusy, setCrafterBusy] = useState(false);
+  const [crafterError, setCrafterError] = useState('');
+  const [crafterHistory, setCrafterHistory] = useState<WidgetCrafterMessage[]>([]);
 
   useEffect(() => {
     if (!editingId || !settings.widgets.some(w => w.id === editingId)) {
@@ -3238,6 +3579,33 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
   useEffect(() => {
     setConfirmDeleteId(null);
   }, [editingId, tab]);
+
+  useEffect(() => {
+    if (!editingId) {
+      setCrafterHistory([]);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(`nexus.widget-crafter.v1.${editingId}`);
+      const parsed = raw ? JSON.parse(raw) : [];
+      setCrafterHistory(Array.isArray(parsed)
+        ? parsed.filter((item): item is WidgetCrafterMessage =>
+            item && (item.role === 'user' || item.role === 'assistant') && typeof item.content === 'string'
+          ).slice(-24)
+        : []);
+    } catch {
+      setCrafterHistory([]);
+    }
+  }, [editingId]);
+
+  useEffect(() => {
+    if (!editingId) return;
+    try {
+      localStorage.setItem(`nexus.widget-crafter.v1.${editingId}`, JSON.stringify(crafterHistory.slice(-24)));
+    } catch {
+      /* Keep the active conversation available in memory if storage is unavailable. */
+    }
+  }, [crafterHistory, editingId]);
 
   const selected = useMemo(
     () => settings.widgets.find(w => w.id === editingId) ?? null,
@@ -3311,6 +3679,33 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
     setEditingId(widget.id);
     setActiveFile('html');
     setTab('workbench');
+  };
+
+  const sendCrafterMessage = async () => {
+    if (!selected || crafterBusy || !crafterPrompt.trim()) return;
+    const request = crafterPrompt.trim();
+    const nextHistory: WidgetCrafterMessage[] = [...crafterHistory, { role: 'user', content: request }];
+    setCrafterPrompt('');
+    setCrafterHistory(nextHistory);
+    setCrafterBusy(true);
+    setCrafterError('');
+    try {
+      const generated = await generateWidgetWithPuter(request, crafterHistory, selected.source);
+      updateSelected({
+        name: generated.name,
+        source: generated.source,
+        bounds: { ...selected.bounds, width: generated.width, height: generated.height },
+      });
+      setCrafterHistory([
+        ...nextHistory,
+        { role: 'assistant', content: `Updated ${generated.name}. Review the code and preview, then tell me what to change next.` },
+      ]);
+    } catch (error: unknown) {
+      setCrafterError(error instanceof Error ? error.message : 'Could not update the widget.');
+      setCrafterHistory(nextHistory);
+    } finally {
+      setCrafterBusy(false);
+    }
   };
 
   const duplicateWidget = (target: WidgetDefinition) => {
@@ -3547,7 +3942,27 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
           </div>
         ) : (
           <div className="ws-workbench">
-            {/* Left Pane: Code Editor */}
+            {/* Pane A: File tree */}
+            <aside className="ws-file-tree" aria-label="Widget files">
+              <span className="ws-pane-label">Files</span>
+              <strong className="ws-tree-widget-name">{selected.name}</strong>
+              <div className="ws-tree-files">
+                {SOURCE_FILES.map(file => (
+                  <button
+                    key={file.key}
+                    type="button"
+                    className={`ws-tree-file ${activeFile === file.key ? 'is-active' : ''}`}
+                    onClick={() => setActiveFile(file.key)}
+                  >
+                    <span className={`ws-file-dot ws-file-dot-${file.key}`} />
+                    {file.label}
+                  </button>
+                ))}
+              </div>
+              <span className="ws-tree-hint">Editable sandbox source</span>
+            </aside>
+
+            {/* Pane B: Code Editor */}
             <section className="ws-editor-pane" aria-label="Source code editor">
               <div className="ws-file-tabs" role="tablist" aria-label="Widget files">
                 {SOURCE_FILES.map(file => (
@@ -3593,7 +4008,7 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
               />
             </section>
 
-            {/* Right Pane: Live Sandbox + Placement Inspector */}
+            {/* Pane C: Live widget preview + placement */}
             <aside className="ws-inspector-pane" aria-label="Widget preview and placement">
               <div className="ws-preview-section">
                 <div className="ws-pane-bar">
@@ -3736,13 +4151,80 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
                 </div>
               </div>
             </aside>
+
+            {/* Pane D: Conversational AI crafter */}
+            <aside className="ws-chat-pane" aria-label="AI widget crafter">
+              <div className="ws-chat-header">
+                <div>
+                  <span className="eyebrow"><Sparkles size={12} /> AI Crafter</span>
+                  <strong>Keep shaping this widget</strong>
+                </div>
+                <span className="ws-crafter-provider">Puter</span>
+              </div>
+              <div className="ws-chat-history" aria-live="polite">
+                {crafterHistory.length === 0 && (
+                  <div className="ws-chat-empty">
+                    <Sparkles size={20} />
+                    <strong>What should change?</strong>
+                    <span>Ask for a visual tweak, a new interaction, or an API-powered feature.</span>
+                  </div>
+                )}
+                {crafterHistory.map((message, index) => (
+                  <div key={`${message.role}-${index}`} className={`ws-chat-message is-${message.role}`}>
+                    <span>{message.role === 'user' ? 'You' : 'Puter AI'}</span>
+                    <p>{message.content}</p>
+                  </div>
+                ))}
+                {crafterBusy && <div className="ws-chat-thinking"><Sparkles size={12} /> Updating source and preview…</div>}
+              </div>
+              <form
+                className="ws-chat-form"
+                onSubmit={event => {
+                  event.preventDefault();
+                  void sendCrafterMessage();
+                }}
+              >
+                <textarea
+                  value={crafterPrompt}
+                  onChange={event => {
+                    setCrafterPrompt(event.target.value);
+                    if (crafterError) setCrafterError('');
+                  }}
+                  placeholder="Make the buttons larger and add NEXUS.music play/pause…"
+                  rows={3}
+                  maxLength={1000}
+                  aria-label="Message AI widget crafter"
+                />
+                <button type="submit" className="primary-btn" disabled={crafterBusy || !crafterPrompt.trim()}>
+                  <Sparkles size={13} /> {crafterBusy ? 'Working…' : 'Send'}
+                </button>
+                {crafterError && <p className="inline-error">{crafterError}</p>}
+              </form>
+            </aside>
           </div>
         )
       )}
 
       {/* ── VIEW 2: LIBRARY & STARTER TEMPLATES ── */}
       {tab === 'library' && (
-        <div className="ws-scroll-page">
+        <div className="ws-scroll-page ws-library-page">
+          <section className="ws-library-hero">
+            <div>
+              <span className="eyebrow">Widget Studio</span>
+              <h2>Build your calm little tools.</h2>
+              <p>Start from a template, import a widget, or open the Workbench and ask AI to craft one.</p>
+            </div>
+            <div className="ws-library-hero-actions">
+              <button type="button" className="primary-btn" onClick={createBlank}><Plus size={13} /> Blank widget</button>
+              <button type="button" className="secondary-btn" onClick={() => setTab('api')}><Code2 size={13} /> Browse APIs</button>
+            </div>
+          </section>
+          <div className="ws-library-stats">
+            <div><strong>{settings.widgets.length}</strong><span>Installed</span></div>
+            <div><strong>{settings.widgets.filter(widget => widget.visible).length}</strong><span>On desktop</span></div>
+            <div><strong>{WIDGET_TEMPLATES.length}</strong><span>Starter templates</span></div>
+            <div><strong>{WIDGET_API_ENTRIES.length}</strong><span>Host APIs</span></div>
+          </div>
           <section className="ws-section">
             <div className="ws-section-head">
               <div>
@@ -3760,9 +4242,24 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
                 </button>
               </div>
             ) : (
-              <div className="ws-library-list">
+              <div className="ws-library-list ws-library-grid">
                 {settings.widgets.map(widget => (
-                  <div className="ws-library-row" key={widget.id}>
+                  <div className="ws-library-row ws-library-card" key={widget.id}>
+                    <div className="ws-library-preview" aria-label={`${widget.name} preview`}>
+                      <WidgetRuntime
+                        widget={widget}
+                        theme={settings.theme}
+                        onOpenApp={appId => {
+                          if (
+                            settings.onOpenApp &&
+                            (VALID_CORE_APP_IDS.includes(appId as CoreAppId) || isShortcutAppId(appId))
+                          ) {
+                            settings.onOpenApp(appId as AppId);
+                          }
+                        }}
+                        onOpenUrl={openExternalUrlSafe}
+                      />
+                    </div>
                     <div className="ws-library-info">
                       <strong>{widget.name}</strong>
                       <span>
@@ -3840,9 +4337,10 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
               <span className="count-label">Ready to customize</span>
             </div>
 
-            <div className="ws-template-grid">
+            <div className="ws-template-grid ws-template-grid-featured">
               {WIDGET_TEMPLATES.map(tpl => (
                 <article className="ws-template-card" key={tpl.id}>
+                  <div className="ws-template-icon"><Sparkles size={16} /></div>
                   <div className="ws-template-body">
                     <div className="ws-template-top">
                       <strong>{tpl.name}</strong>
@@ -3866,20 +4364,13 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
 
       {/* ── VIEW 3: API REFERENCE ── */}
       {tab === 'api' && (
-        <div className="ws-scroll-page">
+        <div className="ws-scroll-page ws-api-page">
           <section className="ws-section">
             <div className="ws-section-head">
               <div>
                 <span className="eyebrow">Host Bridge · window.NEXUS</span>
                 <h3>Widget API Reference</h3>
               </div>
-              <button
-                type="button"
-                className="secondary-btn"
-                onClick={() => addFromTemplate('now-playing')}
-              >
-                <Headphones size={13} /> Use Now Playing template
-              </button>
             </div>
 
             <p className="ws-lead">
@@ -3887,6 +4378,11 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
               Configuration from <code>widget.json</code> is available synchronously on <code>NEXUS.data</code>,
               and live desktop audio state &amp; transport controls are exposed on <code>NEXUS.music</code>.
             </p>
+            <div className="ws-api-contract">
+              <div><strong>Sandbox first</strong><span>Widgets use host-mediated APIs; no direct parent access.</span></div>
+              <div><strong>Theme ready</strong><span>Support <code>body[data-theme="dark"]</code> and <code>nexus:theme</code>.</span></div>
+              <div><strong>Async bridges</strong><span>Notes and Saved Links return Promises across the iframe boundary.</span></div>
+            </div>
 
             <div className="ws-api-toolbar">
               <div className="ws-seg ws-api-cats" role="group" aria-label="Filter API categories">
@@ -3942,7 +4438,7 @@ function WidgetStudioApp({ settings }: { settings: SettingsProps }) {
                 </button>
               </div>
             ) : (
-              <div className="ws-api-list">
+              <div className="ws-api-list ws-api-grid">
                 {filteredApiEntries.map(entry => (
                   <article className="ws-api-item" key={entry.id}>
                     <div className="ws-api-head">

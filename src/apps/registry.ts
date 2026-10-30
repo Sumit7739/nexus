@@ -1,4 +1,4 @@
-import { Bookmark, Code2, Globe2, Headphones, Settings2, StickyNote, Youtube } from 'lucide-react';
+import { Bookmark, CalendarClock, Code2, Globe2, Headphones, Settings2, StickyNote, Youtube } from 'lucide-react';
 import type { AppDefinition } from './app-types';
 import {
   extractHostname,
@@ -13,6 +13,7 @@ export const APP_REGISTRY: AppDefinition[] = [
   { id: 'youtube', name: 'YouTube', description: 'Search, play & remember videos', icon: Youtube, defaultBounds: { x: 120, y: 62, width: 1040, height: 680 }, category: 'web' },
   { id: 'music', name: 'Music', description: 'Audio-first music from YouTube', icon: Headphones, defaultBounds: { x: 160, y: 82, width: 920, height: 620 }, category: 'web' },
   { id: 'notes', name: 'Scratchpad', description: 'Notes, checklists & Markdown', icon: StickyNote, defaultBounds: { x: 170, y: 82, width: 820, height: 560 }, category: 'utility' },
+  { id: 'dayline', name: 'Dayline', description: 'Plan your day around Scratchpad tasks', icon: CalendarClock, defaultBounds: { x: 150, y: 72, width: 920, height: 650 }, category: 'utility' },
   { id: 'bookmarks', name: 'Saved links', description: 'Web shortcuts & pinned destinations', icon: Bookmark, defaultBounds: { x: 155, y: 75, width: 780, height: 610 }, category: 'utility' },
   { id: 'settings', name: 'Settings', description: 'Personalize your workspace', icon: Settings2, defaultBounds: { x: 170, y: 80, width: 760, height: 610 }, category: 'system' },
   { id: 'widgets', name: 'Widget Studio', description: 'Design, edit, and manage widgets', icon: Code2, defaultBounds: { x: 90, y: 50, width: 1080, height: 720 }, category: 'system' },

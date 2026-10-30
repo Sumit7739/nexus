@@ -34,7 +34,7 @@ interface YouTubeSearchItem {
   viewCount?: string;
 }
 
-const PORT = Number(process.env.PORT ?? 3000);
+const PORT = Number(process.env.PORT ?? 3001);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function parseIsoDurationToSeconds(iso: string): number {
@@ -552,7 +552,7 @@ async function createApp() {
       endpoint.search = new URLSearchParams({
         key: apiKey,
         part: 'snippet',
-        q: query,
+        q: isMusic ? `${query} music` : query,
         type: 'video',
         maxResults: '12',
         safeSearch: 'moderate',
@@ -599,6 +599,17 @@ async function createApp() {
           ...(isLive ? { duration: 'LIVE', durationSeconds: 0 } : {}),
         }];
       });
+
+      // Category 10 can legitimately return no items for music uploads that
+      // are not tagged as "Music". Keep search useful by using the same live
+      // web fallback used for missing or exhausted API credentials.
+      if (rawItems.length === 0) {
+        const fallbackItems = await searchYouTubeViaLiveWebFallback(query, isMusic).catch(() => []);
+        if (fallbackItems.length > 0) {
+          res.json({ items: fallbackItems, provider: 'web-oembed' });
+          return;
+        }
+      }
 
       /* Batch-fetch rich video durations & view counts via videos.list */
       if (rawItems.length > 0) {

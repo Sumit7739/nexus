@@ -1,6 +1,43 @@
 # Nexus Changelog
 
-All notable user-facing changes are recorded by release. Versions increment by `0.1` (`0.8.0` → `0.9.0` → `1.0.0` → `1.1.0` → `1.2.0` → `1.3.0` → `1.4.0` → `1.5.0` → `1.6.0` → `1.7.0` → `1.8.0`) on every major feature milestone and stay synchronized with `src/data/version.ts`, `package.json`, and `public/manifest.json`.
+All notable user-facing changes are recorded by release. Versions increment by `0.1` (`0.8.0` → `0.9.0` → `1.0.0` → `1.1.0` → `1.2.0` → `1.3.0` → `1.4.0` → `1.5.0` → `1.6.0` → `1.7.0` → `1.8.0` → `1.9.0` → `2.0.0` → `2.1.0`) on every major feature milestone and stay synchronized with `src/data/version.ts`, `package.json`, and `public/manifest.json`.
+
+## [2.1.0] — Dayline Daily Time-Blocker & Auto-Journal
+
+### Added
+- **Dayline**: plan the current day on an hour-by-hour timeline by dragging open Scratchpad checklist tasks into time blocks.
+- **Scratchpad completion sync**: clicking a planned block checks its source task off in Scratchpad.
+- **Team clocks and weather**: add IANA timezone clocks and optionally look up current weather for a saved city through Open-Meteo.
+- **Workspace Backup parity**: Dayline plans, timezone preferences, and weather location are included in JSON export/import.
+- **Dayline editing**: time blocks now accept native Scratchpad drags, plain text drops, paste, and direct inline editing while keeping their Scratchpad links.
+- **Widget API parity**: added the `NEXUS.dayline` bridge and API Reference entries for reading, adding, editing, and completing today’s time blocks from custom widgets.
+
+## [2.0.0] — AI Widget Crafter, Puter.js Integration & NEXUS.notes/shortcuts Bridge
+
+### Added
+- **AI Widget Crafter**: describe a widget in plain English and generate editable HTML, CSS, JavaScript, JSON, name, and dimensions directly into Widget Studio’s Workbench.
+- **Puter.js AI bridge**: generation runs in the browser through the official Puter.js client script, with no Nexus or Gemini API key exposed to the widget crafter.
+- **NEXUS.notes and NEXUS.shortcuts**: custom widgets can read Scratchpad notes, toggle real Markdown checklist lines, list validated Saved Links, and launch a Saved Link through the desktop host.
+
+### Updated
+- **Widget API Reference**: added asynchronous examples for the Scratchpad and Saved Links bridges.
+- **Widget Studio**: generated widgets become normal editable Nexus widgets and the response is validated before insertion.
+- **Four-pane conversational Workbench**: reorganized Widget Studio into a file tree, editor, live preview, and chat pane with per-widget persisted conversation history.
+- **API-aware theme contract**: the crafter receives the Widget API Reference and generated widgets are required to react to Nexus light/dark theme changes.
+- **Library & API redesign**: added an installed-widget dashboard, workspace stats, template cards, API contract callouts, complete category filters, and responsive API cards.
+- **Expanded API Reference**: documented widget data/state, host time, notifications, theme contract, Stash controls, and all asynchronous Scratchpad/Saved Links methods.
+- **Preview and layout polish**: Library cards now show live sandboxed previews, both pages use centered responsive grids, and the fixed Now Playing template action was removed from the API header.
+
+## [1.9.0] — Stash Edge Shelf — Universal Drop Zone & Snippet Tray
+
+### Added
+- **Stash Edge Shelf (`nexus.stash.v1`)**: open the persistent right-edge shelf from the Dock, edge tab, `Alt+S`, Spotlight, or a custom widget. Paste or drag text, code, colors, calculations, URLs, and YouTube links into the tray.
+- **Browser, Scratchpad & Widget integrations**: send selected text to Stash from either app, or use `window.NEXUS.stash(content)` and `window.NEXUS.openStash()` in Widget Studio.
+- **One-click card actions**: create a Scratchpad note, save HTTP links as shortcuts, queue YouTube videos in Music, open links, copy content, remove cards, filter by type, or clear the shelf.
+
+### Updated
+- **Workspace Backup parity**: JSON export, import validation, and factory reset now persist and restore Stash cards.
+- **Shelf interaction isolation**: Stash controls no longer trigger the desktop global-dismiss handler while the shelf is open.
 
 ## [1.8.0] — Focus Rituals Tied to Scratchpad Tasks, Dock Countdown & Window Decluttering
 

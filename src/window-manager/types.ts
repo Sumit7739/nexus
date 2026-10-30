@@ -1,4 +1,4 @@
-export type CoreAppId = 'browser' | 'youtube' | 'music' | 'notes' | 'bookmarks' | 'settings' | 'widgets';
+export type CoreAppId = 'browser' | 'youtube' | 'music' | 'notes' | 'bookmarks' | 'dayline' | 'settings' | 'widgets';
 export type ShortcutAppId = `shortcut:${string}`;
 export type AppId = CoreAppId | ShortcutAppId;
 export type WindowStatus = 'normal' | 'minimized' | 'maximized';

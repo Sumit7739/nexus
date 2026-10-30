@@ -8,7 +8,7 @@
  *   (enforced automatically by `tests/version.test.ts`).
  */
 
-export const NEXUS_VERSION = '1.8.0';
+export const NEXUS_VERSION = '2.1.0';
 export const NEXUS_VERSION_TAG = `v${NEXUS_VERSION}`;
 
 export type ChangelogCategory = 'added' | 'updated' | 'fixed' | 'removed';
@@ -28,6 +28,83 @@ export interface ChangelogRelease {
 }
 
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
+  {
+    version: '2.1.0',
+    title: 'Dayline Daily Time-Blocker & Auto-Journal',
+    date: 'October 2026',
+    summary:
+      'Added a local daily planner that turns Scratchpad checklist tasks into draggable time blocks with timezone clocks, optional weather, and workspace backup support.',
+    groups: [
+      {
+        kind: 'added',
+        label: 'Added',
+        items: [
+          'Dayline utility app: plan the current day on an hour-by-hour timeline and drag open Scratchpad checklist tasks into time blocks.',
+          'Dayline completion sync: clicking a planned block checks its source task off in Scratchpad.',
+          'Team clocks and optional Open-Meteo weather lookup with locally persisted location and timezone preferences.',
+          'Workspace JSON backup and restore support for Dayline plans and preferences.',
+          'Dayline blocks accept Scratchpad drags, plain text drops, paste, and direct inline editing while preserving Scratchpad task links.',
+          'Added the NEXUS.dayline widget bridge so custom widgets can read and update today’s planner while syncing new tasks to Scratchpad.',
+        ],
+      },
+    ],
+  },
+  {
+    version: '2.0.0',
+    title: 'AI Widget Crafter, Puter.js Integration & NEXUS.notes/shortcuts Bridge',
+    date: 'October 2026',
+    summary:
+      'Added prompt-to-widget generation through Puter.js AI and expanded the sandboxed Widget Studio bridge so custom widgets can work with real Scratchpad tasks and Saved Links.',
+    groups: [
+      {
+        kind: 'added',
+        label: 'Added',
+        items: [
+          'AI Widget Crafter: describe a widget in plain English and generate editable HTML, CSS, JavaScript, JSON, name, and dimensions directly into the Workbench.',
+          'Puter.js client AI bridge: requests run in the browser without exposing a Nexus or Gemini API key, with strict response validation, size limits, and explicit unavailable-service errors.',
+          'NEXUS.notes and NEXUS.shortcuts APIs: custom widgets can read notes, toggle real Markdown checklist lines, list validated Saved Links, and launch a Saved Link through the desktop host.',
+        ],
+      },
+      {
+        kind: 'updated',
+        label: 'Updated',
+        items: [
+          'Widget API Reference now documents the Scratchpad and Saved Links bridges, including their asynchronous iframe-safe usage.',
+          'Widget Studio now loads Puter.js from its official browser script and exposes generated widgets as normal editable Nexus widgets.',
+          'Widget Studio Workbench is now a four-pane flow: file tree, editor, live preview, and conversational AI crafter with per-widget persisted history.',
+          'The crafter includes the documented Widget API Reference in every request and enforces the Nexus light/dark theme contract in generated source.',
+          'Expanded the API Reference with core data/state/time/notice methods, complete theme guidance, Stash controls, and the NEXUS.notes/shortcuts async bridges; redesigned Library and API pages with dashboard cards, stats, and contract callouts.',
+          'Library cards now render live sandboxed widget previews, while Library and API content use centered responsive grids; removed the fixed Now Playing template action from the API header.',
+        ],
+      },
+    ],
+  },
+  {
+    version: '1.9.0',
+    title: 'Stash Edge Shelf — Universal Drop Zone & Snippet Tray',
+    date: 'October 2026',
+    summary:
+      'Added a persistent edge shelf for temporarily collecting snippets, code, colors, calculations, URLs, and YouTube links, with one-click conversion into notes, saved links, Music queue items, or clipboard content.',
+    groups: [
+      {
+        kind: 'added',
+        label: 'Added',
+        items: [
+          'Stash Edge Shelf (`nexus.stash.v1`): open from the Dock, edge tab, Alt+S, Spotlight, or widgets; paste or drag content into a persistent, filterable tray with automatic content classification.',
+          'Stash integrations: send selected text from Browser and Scratchpad, or call `window.NEXUS.stash()` and `window.NEXUS.openStash()` from custom widgets.',
+          'One-click card actions: create a Scratchpad note, save HTTP links as shortcuts, queue YouTube videos in Music, open links, copy content, remove cards, or clear the shelf.',
+        ],
+      },
+      {
+        kind: 'updated',
+        label: 'Updated',
+        items: [
+          'Workspace JSON backup export, import validation, and factory reset now persist and restore Stash cards.',
+          'Stash shelf interactions are isolated from the desktop global-dismiss handler so buttons, filters, input, and drag/drop remain usable while the shelf is open.',
+        ],
+      },
+    ],
+  },
   {
     version: '1.8.0',
     title: 'Focus Rituals Tied to Scratchpad Tasks, Dock Countdown & Window Decluttering',
